@@ -95,6 +95,18 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
   // Eviction: when size reaches 100, delete the oldest inserted key before inserting the new one.
   private readonly messageCache = new Map<string, Map<string, proto.IWebMessageInfo>>();
   private readonly MESSAGE_CACHE_LIMIT = 100;
+
+  // HIDDENXP FORK: Baileys' decoded message.key never carries the RECIPIENT's phone
+  // number for a self-authored (fromMe) message to an @lid contact — only sender_pn/
+  // sender_lid are copied onto the key (see decode-wa-message.js). The raw XMPP stanza
+  // DOES carry it as attrs.recipient_pn / attrs.peer_recipient_pn, so we tap the raw
+  // 'CB:message' websocket event (keyed by stanza id, same id as msg.key.id) to recover
+  // it without patching Baileys itself. Short-lived — pruned well before MESSAGE_CACHE_LIMIT.
+  private readonly stanzaRecipientPn = new Map<string, Map<string, string>>();
+  private readonly STANZA_CACHE_LIMIT = 200;
+  // Learned LID -> phone-number JID pairs, persisted per session so a later message on
+  // the SAME @lid (inbound or outbound) resolves even without a fresh CB:message hit.
+  private readonly lidToPn = new Map<string, Map<string, string>>();
   private readonly qrMeta = new Map<string, { generatedAt: Date }>();
   // Profile-picture URL cache keyed by `${sessionId}:${jid}`. WhatsApp pic URLs
   // are temporary, so entries are refreshed after AVATAR_TTL_MS. A null url is
@@ -405,6 +417,8 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     const sock = makeWASocket(socketOptions);
 
     this.sessions.set(sessionId, sock);
+    this.loadLidMap(sessionId);
+    this.hookRecipientPnCapture(sessionId, sock);
 
     // ─── Event Listeners ────────────────────────────────────────────
 
@@ -581,14 +595,97 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     if (contentType !== 'conversation' && contentType !== 'extendedTextMessage') return;
     const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
     if (!text) return;
-    const lidKey = msg.key as typeof msg.key & { senderPn?: string | null };
-    const resolvedJid = lidKey.senderPn ?? msg.key.remoteJid;
+
+    const rawTo = msg.key.remoteJid ?? '';
+    // key.senderPn is the WRONG field here — on a fromMe stanza it's OUR OWN number,
+    // not the recipient's. The recipient's PN (when the chat is an @lid) only exists
+    // on the raw stanza (attrs.recipient_pn / peer_recipient_pn), recovered via the
+    // CB:message hook below and cached by stanza/message id.
+    let resolvedJid: string | null = rawTo.endsWith('@lid') ? null : rawTo;
+    if (!resolvedJid && rawTo.endsWith('@lid')) {
+      resolvedJid =
+        this.stanzaRecipientPn.get(sessionId)?.get(msg.key.id ?? '') ??
+        this.lidToPn.get(sessionId)?.get(rawTo) ??
+        null;
+      if (resolvedJid) this.rememberLid(sessionId, rawTo, resolvedJid);
+    }
+
     await this.webhookService.fire('message.self', sessionId, {
       messageId: msg.key.id,
-      to: resolvedJid,
+      to: resolvedJid ?? rawTo,
+      toLid: rawTo.endsWith('@lid') ? rawTo : null,
+      resolved: Boolean(resolvedJid),
       timestamp: msg.messageTimestamp,
       text,
     });
+  }
+
+  // ─── LID <-> phone-number resolution helpers (HIDDENXP FORK) ───────────
+
+  private rememberLid(sessionId: string, lid: string, pn: string): void {
+    const normalizedPn = jidNormalizedUser(pn);
+    let map = this.lidToPn.get(sessionId);
+    if (!map) {
+      map = new Map();
+      this.lidToPn.set(sessionId, map);
+    }
+    if (map.get(lid) === normalizedPn) return; // already known, skip the write
+    map.set(lid, normalizedPn);
+    this.persistLidMap(sessionId, map);
+  }
+
+  private persistLidMap(sessionId: string, map: Map<string, string>): void {
+    try {
+      const sessionPath = this.resolveSessionPath(sessionId);
+      const file = path.join(sessionPath, 'lid-map.json');
+      const tmpFile = file + '.tmp';
+      fs.writeFileSync(tmpFile, JSON.stringify(Object.fromEntries(map)), 'utf8');
+      fs.renameSync(tmpFile, file);
+    } catch (err) {
+      console.warn(`[${sessionId}] failed to persist lid-map.json: ${String(err)}`);
+    }
+  }
+
+  private loadLidMap(sessionId: string): void {
+    try {
+      const file = path.join(this.resolveSessionPath(sessionId), 'lid-map.json');
+      if (!fs.existsSync(file)) return;
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>;
+      this.lidToPn.set(sessionId, new Map(Object.entries(parsed)));
+    } catch (err) {
+      console.warn(`[${sessionId}] failed to load lid-map.json: ${String(err)}`);
+    }
+  }
+
+  // Recovers attrs.recipient_pn / attrs.peer_recipient_pn from the raw stanza — Baileys'
+  // decoded message.key never carries the recipient's PN for a fromMe @lid chat. Keyed
+  // by stanza id (== msg.key.id on the resulting decoded message). Capped + pruned so it
+  // can't grow unbounded on a busy session.
+  private hookRecipientPnCapture(sessionId: string, sock: WASocket): void {
+    const cache = new Map<string, string>();
+    this.stanzaRecipientPn.set(sessionId, cache);
+    let loggedUnresolvedOnce = false;
+    (sock.ws as unknown as { on: (event: string, cb: (node: unknown) => void) => void }).on(
+      'CB:message',
+      (node: unknown) => {
+        const attrs = (node as { attrs?: Record<string, string> })?.attrs;
+        const id = attrs?.id;
+        const recipient = attrs?.recipient;
+        const pn = attrs?.recipient_pn || attrs?.peer_recipient_pn;
+        if (id && pn) {
+          if (cache.size >= this.STANZA_CACHE_LIMIT) {
+            const oldest = cache.keys().next().value;
+            if (oldest !== undefined) cache.delete(oldest);
+          }
+          cache.set(id, pn);
+        } else if (id && recipient?.endsWith('@lid') && !loggedUnresolvedOnce) {
+          // Our recipient_pn/peer_recipient_pn attr-name guess didn't match this stanza —
+          // dump every attr once so the real key can be spotted from the logs.
+          loggedUnresolvedOnce = true;
+          console.warn(`[${sessionId}] [lid-resolve] no recipient PN attr found on @lid stanza, full attrs:`, JSON.stringify(attrs));
+        }
+      },
+    );
   }
 
   private async handleIncomingMessages(
@@ -652,6 +749,9 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         senderLid?: string | null;
       };
       const senderPn = lidKey.senderPn ?? null;
+      if (senderPn && msg.key.remoteJid?.endsWith('@lid')) {
+        this.rememberLid(sessionId, msg.key.remoteJid, senderPn);
+      }
 
       const senderJid = senderPn ?? msg.key.remoteJid ?? '';
       const avatarUrl = await this.getAvatarUrl(sessionId, senderJid);
