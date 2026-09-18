@@ -581,9 +581,11 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     if (contentType !== 'conversation' && contentType !== 'extendedTextMessage') return;
     const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
     if (!text) return;
+    const lidKey = msg.key as typeof msg.key & { senderPn?: string | null };
+    const resolvedJid = lidKey.senderPn ?? msg.key.remoteJid;
     await this.webhookService.fire('message.self', sessionId, {
       messageId: msg.key.id,
-      to: msg.key.remoteJid,
+      to: resolvedJid,
       timestamp: msg.messageTimestamp,
       text,
     });
