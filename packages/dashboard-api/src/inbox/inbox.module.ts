@@ -32,6 +32,6 @@ import { InboxSseService } from './inbox-sse.service';
   providers: [InboxService, InboxIngestService, InboxEventsService, InboxSseService, CapabilityGuard],
   // InboxIngestService -> consumed by InternalModule (ingestion hook)
   // InboxEventsService -> consumed by the SSE layer
-  exports: [InboxIngestService, InboxEventsService],
+  exports: [InboxService, InboxIngestService, InboxEventsService],
 })
 export class InboxModule {}

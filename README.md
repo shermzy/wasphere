@@ -282,6 +282,24 @@ curl -X POST https://api.your-domain.com/workspaces/{workspaceId}/webhooks \
 
 Every delivery is signed: `X-WaSphere-Signature: v1,sha256=<hmac>` over `{timestamp}.{rawBody}`.
 
+### Project-routing MCP
+
+AI agents can connect to the Dashboard API's Streamable HTTP MCP endpoint at
+`https://api.your-domain.com/mcp` with a scoped API key:
+
+```http
+Authorization: Bearer wsk_your_key
+```
+
+The server exposes two tools:
+
+- `resolve_project_route` — resolve `#fairbreeze` to the configured conversation.
+- `send_project_update` — send an approved text update through that project route.
+
+The API key must have `messages:read` for resolution and `messages:send` for
+sends. Project mappings remain dashboard-managed; MCP never accepts a manual
+JID or session ID and cannot create, edit, or delete projects.
+
 **Interactive API reference** — every endpoint, request/response schema, and try-it-out console ships built-in on both services (at `/docs/wa-server` and `/docs/admin` on your own deployment). Explore them live:
 
 - 📘 **[WA Server API](https://app.wasphere.com/docs/wa-server)** — sessions, messages (all 14 types), contacts, groups

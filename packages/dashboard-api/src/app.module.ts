@@ -15,6 +15,7 @@ import { ContactsModule } from './contacts/contacts.module';
 import { TeamModule } from './team/team.module';
 import { MailModule } from './mail/mail.module';
 import { ProjectsModule } from './projects/projects.module';
+import { McpModule } from './mcp/mcp.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ProjectsModule } from './projects/projects.module';
     ContactsModule,
     TeamModule,
     ProjectsModule,
+    McpModule,
   ],
   providers: [
     {
