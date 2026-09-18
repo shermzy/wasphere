@@ -5,6 +5,9 @@ export interface SessionConfig {
   random_delay_max_ms: number;
   auto_read_on_receive: boolean;
   receive_enabled: boolean;
+  /** HXP fork: forward genuine handset-typed replies (fromMe + Baileys 'notify') as a
+   * message.self webhook event, for training-data capture. Off by default — opt in per session. */
+  capture_own_device_messages: boolean;
   /** Max outgoing messages per rolling 60s for this session (0 = unlimited). Anti-ban throughput cap. */
   max_messages_per_minute: number;
   /** Engine this session runs on. Defaults to 'baileys'. */
@@ -19,6 +22,7 @@ export const SESSION_CONFIG_DEFAULTS: SessionConfig = {
   random_delay_max_ms: 12000,
   auto_read_on_receive: false,
   receive_enabled: true,
+  capture_own_device_messages: false,
   max_messages_per_minute: 0, // unlimited by default (opt-in cap)
   provider: 'baileys',
 };

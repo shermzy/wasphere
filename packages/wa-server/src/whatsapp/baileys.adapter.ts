@@ -571,6 +571,24 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
 
   // ─── Incoming messages handler ──────────────────────────────────────────
 
+  /**
+   * HIDDENXP FORK: fires a message.self webhook with the FULL text of a reply
+   * typed directly on the linked handset. Opt-in via capture_own_device_messages.
+   * Text-only — media/poll/quoted replies are not captured.
+   */
+  private async emitOwnDeviceMessage(sessionId: string, msg: BaileysEventMap['messages.upsert']['messages'][number]): Promise<void> {
+    const contentType = getContentType(msg.message || {});
+    if (contentType !== 'conversation' && contentType !== 'extendedTextMessage') return;
+    const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+    if (!text) return;
+    await this.webhookService.fire('message.self', sessionId, {
+      messageId: msg.key.id,
+      to: msg.key.remoteJid,
+      timestamp: msg.messageTimestamp,
+      text,
+    });
+  }
+
   private async handleIncomingMessages(
     sessionId: string,
     { messages, type }: BaileysEventMap['messages.upsert'],
@@ -578,12 +596,21 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     if (type !== 'notify') return; // ignore history sync
 
     for (const msg of messages) {
-      if (msg.key.fromMe) continue; // ignore own messages
+      const config = this.sessionConfigs.get(sessionId) ?? SESSION_CONFIG_DEFAULTS;
+
+      if (msg.key.fromMe) {
+        // HIDDENXP FORK: a message that reaches here is 'notify'-type and fromMe —
+        // i.e. it was typed directly on the linked handset, not sent via our own API
+        // (API sends arrive as type 'append' and never reach this point at all —
+        // see the type !== 'notify' guard above). Opt-in only, off by default.
+        if (config.capture_own_device_messages) {
+          await this.emitOwnDeviceMessage(sessionId, msg).catch(() => {});
+        }
+        continue; // never falls through to the customer-message content path below
+      }
 
       // Cache message for quoted reply support
       this.cacheMessage(sessionId, msg);
-
-      const config = this.sessionConfigs.get(sessionId) ?? SESSION_CONFIG_DEFAULTS;
 
       if (!config.receive_enabled) continue; // early exit — webhook not fired
 

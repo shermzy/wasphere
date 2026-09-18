@@ -39,6 +39,14 @@ export class PatchSessionConfigDto {
   receive_enabled?: boolean;
 
   @ApiPropertyOptional({
+    description: 'HXP fork: when true, replies typed directly on the linked handset are forwarded as a message.self webhook event (opt-in training-data capture).',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  capture_own_device_messages?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Maximum outgoing messages per rolling 60 seconds (0 = unlimited). The server paces sends so this rate is never exceeded.',
     example: 20,
   })
