@@ -157,6 +157,22 @@ test('archives conversations on session logout and restores them on reconnect', 
   assert.equal(c.sessionDeletedAt, null);
 });
 
+test('message.self (handset-typed reply) persists as an outbound inbox message', async () => {
+  const jid = '923000000007@s.whatsapp.net';
+  await handle({
+    event: 'message.self',
+    sessionId: 'selfsess',
+    timestamp: '2026-01-01T00:00:00Z',
+    data: { messageId: 'self1', to: jid, timestamp: 1700000000, text: 'typed on the handset' },
+  });
+  const m = await prisma.message.findFirst({ where: { workspaceId: wsId, waMessageId: 'self1' } });
+  assert.equal(m.direction, 'OUTBOUND');
+  assert.equal(m.fromMe, true);
+  assert.equal(m.body, 'typed on the handset');
+  const c = await prisma.conversation.findFirst({ where: { workspaceId: wsId, contact: { phone: '923000000007' } } });
+  assert.equal(c.lastPreview, 'typed on the handset');
+});
+
 test('a new inbound message also clears a stale archive flag', async () => {
   const jid = '923000000006@s.whatsapp.net';
   await handle(textMsg('rev1', jid, 'revsess'));

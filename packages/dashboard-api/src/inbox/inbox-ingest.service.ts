@@ -108,6 +108,21 @@ export class InboxIngestService {
         return this.ingestInbound(workspaceId, dto);
       case 'message.sent':
         return this.ingestOutbound(workspaceId, dto);
+      case 'message.self':
+        // HIDDENXP FORK: handset-typed replies (capture_own_device_messages) arrive
+        // as { messageId, to, timestamp, text } — reshape to message.sent's
+        // { to, messageId, type, content: {text}, timestamp } and reuse the same
+        // upsert path so they show up in the inbox thread like any other outbound.
+        return this.ingestOutbound(workspaceId, {
+          ...dto,
+          data: {
+            to: (dto.data as Record<string, any>).to,
+            messageId: (dto.data as Record<string, any>).messageId,
+            type: 'text',
+            content: { text: (dto.data as Record<string, any>).text },
+            timestamp: (dto.data as Record<string, any>).timestamp,
+          },
+        });
       case 'messages.update':
         return this.applyStatusUpdates(workspaceId, dto);
       case 'session.deleted':
