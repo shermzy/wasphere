@@ -14,6 +14,7 @@ import { MediaModule } from './media/media.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { TeamModule } from './team/team.module';
 import { MailModule } from './mail/mail.module';
+import { ProjectsModule } from './projects/projects.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { MailModule } from './mail/mail.module';
     MediaModule,
     ContactsModule,
     TeamModule,
+    ProjectsModule,
   ],
   providers: [
     {

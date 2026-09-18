@@ -18,6 +18,7 @@ import { Composer, type ComposerCapabilities } from "./composer"
 import { ContactPanel } from "./contact-panel"
 import { ForwardDialog } from "./forward-dialog"
 import type { Conversation, ConversationStatus, InboxMessage, OutboundReply, Paginated } from "./types"
+import type { ProjectRoute } from "@/components/projects/types"
 
 const SOUND_KEY = "wasphere.inbox.soundEnabled"
 const MUTED_KEY = "wasphere.inbox.mutedConversations"
@@ -37,8 +38,9 @@ function beep() {
   } catch { /* ignore */ }
 }
 
-export function InboxView({ initialConversations }: { initialConversations: Conversation[] }) {
+export function InboxView({ initialConversations, initialProjects }: { initialConversations: Conversation[]; initialProjects: ProjectRoute[] }) {
   const [conversations, setConversations] = React.useState<Conversation[]>(initialConversations)
+  const [projectRoutes, setProjectRoutes] = React.useState<ProjectRoute[]>(initialProjects)
   const [listLoading, setListLoading] = React.useState(false)
   const [statusTab, setStatusTab] = React.useState<ConversationStatus>("OPEN")
   const [search, setSearch] = React.useState("")
@@ -64,6 +66,9 @@ export function InboxView({ initialConversations }: { initialConversations: Conv
   const [ncSending, setNcSending] = React.useState(false)
 
   const selectedId = selected?.id ?? null
+  const selectedProject = selected
+    ? projectRoutes.find((project) => project.target.conversationId === selected.id || (project.sessionId === selected.sessionId && project.target.jid === selected.contact.jid)) ?? null
+    : null
   const selectedIdRef = React.useRef<string | null>(null)
   selectedIdRef.current = selectedId
   const mutedIdsRef = React.useRef(mutedIds)
@@ -283,6 +288,31 @@ export function InboxView({ initialConversations }: { initialConversations: Conv
     }).catch(() => null)
   }
 
+  const updateProject = async (projectId: string) => {
+    if (!selected) return
+    if (!projectId) {
+      if (!selectedProject) return
+      const response = await fetch(`/api/projects/${selectedProject.id}`, { method: "DELETE" })
+      if (!response.ok) { toast.error("Could not remove project."); return }
+      setProjectRoutes((current) => current.filter((project) => project.id !== selectedProject.id))
+      toast.success("Project removed from chat")
+      return
+    }
+    const response = await fetch(`/api/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: selected.sessionId, targetJid: selected.contact.jid }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const message = Array.isArray(data.message) ? data.message.join("\n") : (data.message ?? "Could not assign project.")
+      toast.error(message)
+      return
+    }
+    setProjectRoutes((current) => current.map((project) => project.id === data.id ? data as ProjectRoute : project))
+    toast.success("Project assigned to chat")
+  }
+
   const toggleResolve = async () => {
     if (!selected) return
     const next: ConversationStatus = selected.status === "RESOLVED" ? "OPEN" : "RESOLVED"
@@ -405,6 +435,9 @@ export function InboxView({ initialConversations }: { initialConversations: Conv
               conversation={selected}
               recent={messages}
               onTagsChange={updateTags}
+              project={selectedProject}
+              projects={projectRoutes}
+              onProjectChange={(projectId) => void updateProject(projectId)}
               onNotesChange={updateNotes}
               muted={mutedIds.has(selected.id)}
               onToggleMute={(v) => toggleMute(selected.id, v)}
@@ -469,6 +502,9 @@ export function InboxView({ initialConversations }: { initialConversations: Conv
               conversation={selected}
               recent={messages}
               onTagsChange={updateTags}
+              project={selectedProject}
+              projects={projectRoutes}
+              onProjectChange={(projectId) => void updateProject(projectId)}
               onNotesChange={updateNotes}
               muted={mutedIds.has(selected.id)}
               onToggleMute={(v) => toggleMute(selected.id, v)}

@@ -15,6 +15,7 @@ import { ListConversationsQueryDto } from './dto/list-conversations-query.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
 import { PatchConversationDto } from './dto/patch-conversation.dto';
 import { SendReplyDto } from './dto/send-reply.dto';
+import { normalizeProjectRouteKey } from '../projects/project-route-key';
 
 // List/preview labels for outbound non-text replies (no body text to show).
 const OUTBOUND_PREVIEW: Record<string, string> = {
@@ -431,21 +432,12 @@ export class InboxService {
 
   // ── view shaping ────────────────────────────────────────────────────────────
 
-  private normalizeRouteKey(value: string): string {
-    return value.trim().replace(/^#+/, '').toLowerCase();
-  }
-
   private requireRouteKey(value: string): string {
-    const normalized = this.normalizeRouteKey(value);
-    if (!normalized || normalized.length > 40) {
+    const normalized = normalizeProjectRouteKey(value);
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(normalized)) {
       throw new BadRequestException('Route key must be 1–40 characters.');
     }
     return normalized;
-  }
-
-  private routeMatches(tags: Prisma.JsonValue, normalizedRouteKey: string): boolean {
-    if (!Array.isArray(tags)) return false;
-    return tags.some((tag) => typeof tag === 'string' && this.normalizeRouteKey(tag) === normalizedRouteKey);
   }
 
   async listRouteMatches(
@@ -456,15 +448,36 @@ export class InboxService {
   ) {
     await this.assertMember(workspaceId, userId);
     const normalizedRouteKey = this.requireRouteKey(routeKey);
-    const conversations = await this.prisma.conversation.findMany({
-      where: { workspaceId, ...(sessionScope ? { sessionId: sessionScope } : {}) },
-      orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
-      include: { contact: true },
+    const project = await this.prisma.projectRoute.findFirst({
+      where: {
+        workspaceId,
+        routeKey: normalizedRouteKey,
+        ...(sessionScope ? { conversation: { is: { sessionId: sessionScope } } } : {}),
+      },
+      include: { conversation: { include: { contact: true } } },
     });
-    // ponytail: bounded workspace scan; move to a JSONB containment query if route volume warrants it.
-    return conversations
-      .filter((conversation) => this.routeMatches(conversation.tags, normalizedRouteKey))
-      .map((conversation) => this.toConversationView(conversation));
+    if (!project) throw new NotFoundException(`Project route ${routeKey} not found`);
+    return [this.toConversationView(project.conversation)];
+  }
+
+  private async assertRouteSessionAvailable(userId: string, workspaceId: string, sessionId: string): Promise<void> {
+    const { waServerUrl, token } = await this.workspaces.getDecryptedToken(userId, workspaceId);
+    let response: globalThis.Response;
+    try {
+      response = await fetch(
+        `${waServerUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(sessionId)}`,
+        { headers: { 'X-Api-Token': token, Accept: 'application/json' } },
+      );
+    } catch {
+      throw new ServiceUnavailableException('Project target unavailable: WA Server is unreachable.');
+    }
+    if (!response.ok) {
+      throw new ServiceUnavailableException(`Project target unavailable: session "${sessionId}" is offline.`);
+    }
+    const info = (await response.json().catch(() => ({}))) as { status?: string };
+    if (info.status !== 'connected') {
+      throw new ServiceUnavailableException(`Project target unavailable: session "${sessionId}" is ${info.status ?? 'offline'}.`);
+    }
   }
 
   async sendToRoute(
@@ -475,12 +488,7 @@ export class InboxService {
     sessionScope?: string | null,
   ) {
     const matches = await this.listRouteMatches(userId, workspaceId, routeKey, sessionScope);
-    if (matches.length === 0) throw new NotFoundException(`No conversation is tagged ${routeKey}`);
-    if (matches.length > 1) {
-      throw new BadRequestException(
-        `Route ${routeKey} matches ${matches.length} conversations; make the tag unique before sending.`,
-      );
-    }
+    await this.assertRouteSessionAvailable(userId, workspaceId, matches[0].sessionId);
     return this.sendReply(userId, workspaceId, matches[0].id, dto);
   }
 

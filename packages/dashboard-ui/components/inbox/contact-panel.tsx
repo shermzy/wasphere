@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { X, FileText, BellOff } from "lucide-react"
+import Link from "next/link"
+import { X, FileText, BellOff, FolderKanban } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -9,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { clockTime } from "./relative-time"
 import type { Conversation, InboxMessage } from "./types"
+import type { ProjectRoute } from "@/components/projects/types"
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
@@ -85,6 +87,9 @@ export function ContactPanel({
   onNotesChange,
   muted,
   onToggleMute,
+  project,
+  projects,
+  onProjectChange,
 }: {
   conversation: Conversation
   recent: InboxMessage[]
@@ -92,6 +97,9 @@ export function ContactPanel({
   onNotesChange?: (notes: string) => void
   muted?: boolean
   onToggleMute?: (muted: boolean) => void
+  project?: ProjectRoute | null
+  projects?: ProjectRoute[]
+  onProjectChange?: (projectId: string) => void
 }) {
   const c = conversation.contact
   const visible = recent.filter((m) => m.type !== "unknown")
@@ -136,6 +144,34 @@ export function ContactPanel({
         ) : (
           <span className="text-xs text-muted-foreground">No tags</span>
         )}
+      </Section>
+
+      {/* project route — intentionally separate from generic Inbox tags */}
+      <Section title="Project">
+        {project ? (
+          <div className="flex items-center gap-2">
+            <FolderKanban className="size-4 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{project.name}</div>
+              <code className="text-[10px] text-muted-foreground">#{project.routeKey}</code>
+            </div>
+            {project.availability === "unavailable" && <Badge variant="destructive" className="text-[10px]">Unavailable</Badge>}
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">Not assigned to a project</span>
+        )}
+        {onProjectChange && (
+          <select
+            aria-label="Assign project route"
+            value={project?.id ?? ""}
+            onChange={(event) => onProjectChange(event.target.value)}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+          >
+            <option value="">No project</option>
+            {(projects ?? []).map((item) => <option key={item.id} value={item.id}>{item.name} · #{item.routeKey}</option>)}
+          </select>
+        )}
+        <Link href="/dashboard/projects" className="text-xs text-primary underline-offset-4 hover:underline">Manage projects</Link>
       </Section>
 
       {/* media & docs */}

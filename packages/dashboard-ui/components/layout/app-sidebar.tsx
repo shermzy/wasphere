@@ -21,6 +21,7 @@ import {
   ExternalLink,
   BookOpen,
   ShieldCheck,
+  FolderKanban,
 } from "lucide-react";
 
 import {
@@ -54,6 +55,7 @@ const NAV_ITEMS: {
   { label: "Overview", href: "/dashboard/overview", icon: LayoutDashboard, always: true },
   { label: "Sessions", href: "/dashboard/sessions", icon: Smartphone, cap: "sessions" },
   { label: "Inbox", href: "/dashboard/inbox", icon: Inbox, cap: "inbox" },
+  { label: "Projects", href: "/dashboard/projects", icon: FolderKanban, always: true },
   { label: "Contacts", href: "/dashboard/contacts", icon: Contact, cap: "contacts" },
   { label: "Messages", href: "/dashboard/messages", icon: MessageSquare, cap: "messages" },
   { label: "Webhooks", href: "/dashboard/webhooks", icon: Webhook, cap: "webhooks" },

@@ -4,6 +4,7 @@ import { serverGet } from "@/lib/server-fetch"
 import { DEMO_MODE } from "@/lib/demo"
 import { InboxView } from "@/components/inbox/inbox-view"
 import type { Conversation, Paginated } from "@/components/inbox/types"
+import type { ProjectRoute } from "@/components/projects/types"
 
 async function fetchWorkspaceId(token: string): Promise<string | null> {
   const { ok, data } = await serverGet<Array<{ id: string }> | { workspaces: Array<{ id: string }> }>("/workspaces", token)
@@ -24,6 +25,7 @@ export default async function InboxPage() {
     `/workspaces/${workspaceId}/conversations?status=OPEN&limit=50`,
     token,
   )
+  const projects = await serverGet<ProjectRoute[]>(`/workspaces/${workspaceId}/projects`, token)
 
-  return <InboxView initialConversations={data?.items ?? []} />
+  return <InboxView initialConversations={data?.items ?? []} initialProjects={projects.data ?? []} />
 }

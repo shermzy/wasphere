@@ -31,6 +31,7 @@ async function seedContact(name, phone) {
 before(async () => {
   await prisma.$connect();
   await prisma.message.deleteMany({});
+  await prisma.projectRoute.deleteMany({});
   await prisma.conversation.deleteMany({});
   await prisma.contact.deleteMany({});
   await prisma.workspaceMember.deleteMany({});
@@ -96,9 +97,18 @@ test('patchConversation updates status, tags and notes', async () => {
   assert.equal(view.notes, 'paid customer');
 });
 
-test('resolves a hash route and rejects ambiguous routes', async () => {
+test('resolves a hash project route without consulting generic tags', async () => {
   const project = await seedContact('Project A', '923070000007');
   const other = await seedContact('Project B', '923080000008');
+  await prisma.projectRoute.create({
+    data: {
+      workspaceId: wsId,
+      conversationId: project.id,
+      name: 'Project A',
+      routeKey: 'project-a',
+      createdBy: userId,
+    },
+  });
   await svc.patchConversation(userId, wsId, project.id, { tags: ['#project-a'] });
 
   const matches = await svc.listRouteMatches(userId, wsId, 'project-a');
@@ -106,10 +116,8 @@ test('resolves a hash route and rejects ambiguous routes', async () => {
   assert.equal(matches[0].id, project.id);
 
   await svc.patchConversation(userId, wsId, other.id, { tags: ['project-a'] });
-  await assert.rejects(
-    () => svc.sendToRoute(userId, wsId, '#project-a', { kind: 'text', text: 'update' }),
-    /matches 2 conversations/,
-  );
+  assert.equal((await svc.listRouteMatches(userId, wsId, '#project-a')).length, 1);
+  await assert.rejects(() => svc.listRouteMatches(userId, wsId, 'not-a-project'), /Project route/);
 });
 
 test('status filter returns only matching conversations', async () => {
