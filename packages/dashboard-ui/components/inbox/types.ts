@@ -2,7 +2,9 @@ export type ConversationStatus = "OPEN" | "RESOLVED" | "SNOOZED"
 
 export interface InboxContact {
   id: string
+  jid: string
   phone: string
+  isGroup: boolean
   name: string
   savedName: string | null
   whatsappName: string | null

@@ -96,6 +96,22 @@ test('patchConversation updates status, tags and notes', async () => {
   assert.equal(view.notes, 'paid customer');
 });
 
+test('resolves a hash route and rejects ambiguous routes', async () => {
+  const project = await seedContact('Project A', '923070000007');
+  const other = await seedContact('Project B', '923080000008');
+  await svc.patchConversation(userId, wsId, project.id, { tags: ['#project-a'] });
+
+  const matches = await svc.listRouteMatches(userId, wsId, 'project-a');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].id, project.id);
+
+  await svc.patchConversation(userId, wsId, other.id, { tags: ['project-a'] });
+  await assert.rejects(
+    () => svc.sendToRoute(userId, wsId, '#project-a', { kind: 'text', text: 'update' }),
+    /matches 2 conversations/,
+  );
+});
+
 test('status filter returns only matching conversations', async () => {
   const a = await seedContact('Open1', '923050000005');
   await seedContact('Open2', '923060000006');

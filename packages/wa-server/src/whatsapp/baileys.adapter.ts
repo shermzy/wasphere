@@ -101,6 +101,10 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
   // cached too (contact has no pic / pic is private) to avoid re-fetching.
   private readonly avatarCache = new Map<string, { url: string | null; at: number }>();
   private readonly AVATAR_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+  // Group subjects change infrequently; avoid a metadata request for every
+  // message while still refreshing names during a long-lived session.
+  private readonly groupNameCache = new Map<string, { name: string | null; at: number }>();
+  private readonly GROUP_NAME_TTL_MS = 10 * 60 * 1000;
 
   constructor(private webhookService: WebhookService) {
     // Ensure sessions directory exists
@@ -625,7 +629,8 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       const senderPn = lidKey.senderPn ?? null;
 
       const senderJid = senderPn ?? msg.key.remoteJid ?? '';
-      const avatarUrl = await this.getAvatarUrl(sessionId, senderJid);
+      const avatarUrl = isGroup ? null : await this.getAvatarUrl(sessionId, senderJid);
+      const groupName = isGroup ? await this.getGroupName(sessionId, msg.key.remoteJid ?? '') : null;
 
       const basePayload = {
         messageId: msg.key.id,
@@ -637,6 +642,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         senderLid: lidKey.senderLid ?? (msg.key.remoteJid?.endsWith('@lid') ? msg.key.remoteJid : null),
         avatarUrl,
         isGroup,
+        groupName,
         timestamp: msg.messageTimestamp,
         type: contentType,
       };
@@ -750,6 +756,22 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     }
     this.avatarCache.set(cacheKey, { url, at: Date.now() });
     return url;
+  }
+
+  private async getGroupName(sessionId: string, jid: string): Promise<string | null> {
+    if (!jid) return null;
+    const cacheKey = `${sessionId}:${jid}`;
+    const hit = this.groupNameCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < this.GROUP_NAME_TTL_MS) return hit.name;
+
+    try {
+      const name = (await this.getSocket(sessionId).groupMetadata(jid)).subject?.trim() || null;
+      this.groupNameCache.set(cacheKey, { name, at: Date.now() });
+      return name;
+    } catch {
+      // Group metadata is display-only; message delivery must not depend on it.
+      return hit?.name ?? null;
+    }
   }
 
   /**

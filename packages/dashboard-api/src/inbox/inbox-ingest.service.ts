@@ -127,28 +127,33 @@ export class InboxIngestService {
     const waMessageId: string | undefined = data.messageId ?? m?.key?.id;
     if (!rawJid || !waMessageId) return;
 
-    // v1.1 is 1:1 only — skip groups, status, broadcast lists and channels.
+    // Groups are first-class Inbox conversations. Status, broadcast lists and
+    // channels are not chats that an operator can reply to.
     if (
-      rawJid.endsWith('@g.us') ||
       rawJid.endsWith('@broadcast') ||
       rawJid.endsWith('@newsletter') ||
-      rawJid === 'status@broadcast' ||
-      data.isGroup === true
+      rawJid === 'status@broadcast'
     ) {
       return;
     }
+
+    const isGroup = rawJid.endsWith('@g.us') || data.isGroup === true;
 
     // LID addressing: WhatsApp now sends an opaque "<id>@lid" as the chat id.
     // The real phone-number JID arrives as senderJid/senderPn — prefer it so we
     // store/display the true number and reply to a deliverable address.
     const senderPn: string | undefined = data.senderPn ?? m?.key?.senderPn ?? undefined;
     const isLid = rawJid.endsWith('@lid');
-    const jid: string = data.senderJid ?? (isLid && senderPn ? senderPn : rawJid);
+    const jid: string = isGroup ? rawJid : data.senderJid ?? (isLid && senderPn ? senderPn : rawJid);
 
     const fromMe = Boolean(m?.key?.fromMe);
     const pushName: string | null = (m?.pushName as string) ?? null;
-    const avatarUrl: string | null = (data.avatarUrl as string) ?? null;
-    const phone = jid.split('@')[0].replace(/[^0-9]/g, '');
+    const avatarUrl: string | null = isGroup ? null : (data.avatarUrl as string) ?? null;
+    // Group JIDs are the send target; 1:1 chats keep their normalized phone.
+    const phone = isGroup ? jid : jid.split('@')[0].replace(/[^0-9]/g, '');
+    const chatName: string | null = isGroup
+      ? ((data.groupName ?? data.chatName ?? data.fromName) as string | null) ?? null
+      : pushName;
     const waTimestamp = new Date(toUnixSeconds(data.timestamp ?? m?.messageTimestamp) * 1000);
     const type = mapType(data.type);
     const body: string | null =
@@ -186,10 +191,10 @@ export class InboxIngestService {
       const contact = await tx.contact.upsert({
         where: { workspaceId_jid: { workspaceId, jid } },
         update: {
-          ...(pushName ? { whatsappName: pushName } : {}),
+          ...(chatName ? { whatsappName: chatName } : {}),
           ...(avatarUrl ? { avatarUrl } : {}),
         },
-        create: { workspaceId, jid, phone, whatsappName: pushName, avatarUrl },
+        create: { workspaceId, jid, phone, whatsappName: chatName, avatarUrl },
       });
 
       const convo = await tx.conversation.upsert({
@@ -249,10 +254,10 @@ export class InboxIngestService {
     if (!to || !waMessageId) return;
 
     const jid = String(to).includes('@') ? String(to) : `${String(to).replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-    // Skip groups/broadcast — 1:1 inbox only (mirror of the inbound guard).
-    if (jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return;
+    // Broadcast lists and channels are not replyable Inbox conversations.
+    if (jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return;
 
-    const phone = jid.split('@')[0].replace(/[^0-9]/g, '');
+    const phone = jid.endsWith('@g.us') ? jid : jid.split('@')[0].replace(/[^0-9]/g, '');
     const type = mapType(data.type);
     const content: Record<string, unknown> = { ...(data.content ?? {}) };
     const mediaUrl: string | null = (content.dataUri as string) ?? null;

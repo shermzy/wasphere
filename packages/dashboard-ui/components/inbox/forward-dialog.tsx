@@ -97,7 +97,7 @@ export function ForwardDialog({
                   </Avatar>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-foreground">{c.contact.name}</div>
-                    <div className="truncate text-xs text-muted-foreground">+{c.contact.phone}</div>
+                    <div className="truncate text-xs text-muted-foreground">{c.contact.isGroup ? c.contact.phone : `+${c.contact.phone}`}</div>
                   </div>
                   {sending === c.id && <span className="text-xs text-muted-foreground">Sending…</span>}
                 </button>

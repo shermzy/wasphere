@@ -109,10 +109,10 @@ export function ContactPanel({
         </Avatar>
         <div>
           <div className="text-sm font-semibold text-foreground">{c.name}</div>
-          <div className="text-xs text-muted-foreground">+{c.phone}</div>
+          <div className="text-xs text-muted-foreground">{c.isGroup ? c.phone : `+${c.phone}`}</div>
         </div>
         <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">
-          WhatsApp contact
+          {c.isGroup ? "WhatsApp group" : "WhatsApp contact"}
         </span>
       </div>
 

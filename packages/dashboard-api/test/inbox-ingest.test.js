@@ -87,12 +87,24 @@ test('resolves a @lid chat to the real phone number via senderPn', async () => {
   assert.equal(c.avatarUrl, 'https://pps.whatsapp.net/a.jpg');
 });
 
-test('skips groups, newsletters, status and broadcast (1:1 only)', async () => {
-  for (const jid of ['123@g.us', '456@newsletter', 'status@broadcast', '789@broadcast']) {
+test('stores groups but skips newsletters, status and broadcast', async () => {
+  for (const jid of ['456@newsletter', 'status@broadcast', '789@broadcast']) {
     await handle(textMsg('x-' + jid, jid));
   }
-  assert.equal(await prisma.contact.count({ where: { workspaceId: wsId } }), 0);
-  assert.equal(await prisma.message.count({ where: { workspaceId: wsId } }), 0);
+  await handle(received({
+    messageId: 'group-1',
+    from: '123@g.us',
+    isGroup: true,
+    groupName: 'Project A',
+    sender: '923000000010@s.whatsapp.net',
+    content: { text: 'group hello' },
+    message: { key: { remoteJid: '123@g.us', id: 'group-1' }, pushName: 'Member' },
+  }));
+  const contact = await prisma.contact.findFirst({ where: { workspaceId: wsId } });
+  assert.equal(contact.jid, '123@g.us');
+  assert.equal(contact.phone, '123@g.us');
+  assert.equal(contact.whatsappName, 'Project A');
+  assert.equal(await prisma.message.count({ where: { workspaceId: wsId } }), 1);
 });
 
 test('is idempotent on (workspace, waMessageId)', async () => {

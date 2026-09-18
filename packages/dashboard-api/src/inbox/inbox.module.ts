@@ -3,7 +3,10 @@ import { JwtModule } from '@nestjs/jwt';
 import { PrismaModule } from '../prisma/prisma.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { ApiKeysModule } from '../api-keys/api-keys.module';
+import { AuthModule } from '../auth/auth.module';
+import { CapabilityGuard } from '../auth/capability.guard';
 import { InboxController } from './inbox.controller';
+import { RoutesController } from './routes.controller';
 import { InboxSseController } from './inbox-sse.controller';
 import { InboxService } from './inbox.service';
 import { InboxIngestService } from './inbox-ingest.service';
@@ -19,13 +22,14 @@ import { InboxSseService } from './inbox-sse.service';
     PrismaModule,
     WorkspacesModule,
     ApiKeysModule,
+    AuthModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { algorithm: 'HS256' },
     }),
   ],
-  controllers: [InboxController, InboxSseController],
-  providers: [InboxService, InboxIngestService, InboxEventsService, InboxSseService],
+  controllers: [InboxController, InboxSseController, RoutesController],
+  providers: [InboxService, InboxIngestService, InboxEventsService, InboxSseService, CapabilityGuard],
   // InboxIngestService -> consumed by InternalModule (ingestion hook)
   // InboxEventsService -> consumed by the SSE layer
   exports: [InboxIngestService, InboxEventsService],

@@ -262,7 +262,7 @@ export class InboxService {
 
     // getDecryptedToken re-checks membership + that the WA server is configured.
     const { waServerUrl, token } = await this.workspaces.getDecryptedToken(userId, workspaceId);
-    const to = convo.contact.phone;
+    const to = convo.contact.jid.endsWith('@g.us') ? convo.contact.jid : convo.contact.phone;
     const base =
       `${waServerUrl.replace(/\/+$/, '')}/api/sessions/` +
       `${encodeURIComponent(convo.sessionId)}/messages`;
@@ -431,6 +431,59 @@ export class InboxService {
 
   // ── view shaping ────────────────────────────────────────────────────────────
 
+  private normalizeRouteKey(value: string): string {
+    return value.trim().replace(/^#+/, '').toLowerCase();
+  }
+
+  private requireRouteKey(value: string): string {
+    const normalized = this.normalizeRouteKey(value);
+    if (!normalized || normalized.length > 40) {
+      throw new BadRequestException('Route key must be 1–40 characters.');
+    }
+    return normalized;
+  }
+
+  private routeMatches(tags: Prisma.JsonValue, normalizedRouteKey: string): boolean {
+    if (!Array.isArray(tags)) return false;
+    return tags.some((tag) => typeof tag === 'string' && this.normalizeRouteKey(tag) === normalizedRouteKey);
+  }
+
+  async listRouteMatches(
+    userId: string,
+    workspaceId: string,
+    routeKey: string,
+    sessionScope?: string | null,
+  ) {
+    await this.assertMember(workspaceId, userId);
+    const normalizedRouteKey = this.requireRouteKey(routeKey);
+    const conversations = await this.prisma.conversation.findMany({
+      where: { workspaceId, ...(sessionScope ? { sessionId: sessionScope } : {}) },
+      orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+      include: { contact: true },
+    });
+    // ponytail: bounded workspace scan; move to a JSONB containment query if route volume warrants it.
+    return conversations
+      .filter((conversation) => this.routeMatches(conversation.tags, normalizedRouteKey))
+      .map((conversation) => this.toConversationView(conversation));
+  }
+
+  async sendToRoute(
+    userId: string,
+    workspaceId: string,
+    routeKey: string,
+    dto: SendReplyDto,
+    sessionScope?: string | null,
+  ) {
+    const matches = await this.listRouteMatches(userId, workspaceId, routeKey, sessionScope);
+    if (matches.length === 0) throw new NotFoundException(`No conversation is tagged ${routeKey}`);
+    if (matches.length > 1) {
+      throw new BadRequestException(
+        `Route ${routeKey} matches ${matches.length} conversations; make the tag unique before sending.`,
+      );
+    }
+    return this.sendReply(userId, workspaceId, matches[0].id, dto);
+  }
+
   private toConversationView(c: {
     id: string;
     sessionId: string;
@@ -456,6 +509,8 @@ export class InboxService {
       contact: {
         id: c.contact.id,
         phone: c.contact.phone,
+        jid: c.contact.jid,
+        isGroup: c.contact.jid.endsWith('@g.us'),
         // display priority: savedName ?? whatsappName ?? phone
         name: c.contact.savedName ?? c.contact.whatsappName ?? c.contact.phone,
         savedName: c.contact.savedName,
