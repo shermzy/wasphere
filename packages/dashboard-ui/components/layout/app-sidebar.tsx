@@ -23,6 +23,8 @@ import {
   ShieldCheck,
   FolderKanban,
 } from "lucide-react";
+import { WorkspaceSwitcher } from "@/components/workspaces/workspace-switcher";
+import { useWorkspace } from "@/components/workspaces/workspace-provider";
 
 import {
   Sidebar,
@@ -161,6 +163,7 @@ function ExternalNavItem({
 export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
   const pathname = usePathname();
   const { state, setOpen, isMobile } = useSidebar();
+  const { selectedWorkspaceId } = useWorkspace();
 
   // Nav visibility is driven by the member's effective capabilities. Owners and
   // admins get everything; agents see Inbox/Contacts plus whatever they've been
@@ -169,11 +172,13 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
   const [role, setRole] = React.useState<string | null>(null);
   const [caps, setCaps] = React.useState<string[] | null>(null);
   React.useEffect(() => {
+    setRole(null);
+    setCaps(null);
     fetch("/api/team/my-role")
       .then((r) => r.json())
       .then((d) => { setRole(d?.role ?? null); setCaps(Array.isArray(d?.capabilities) ? d.capabilities : null); })
       .catch(() => {});
-  }, []);
+  }, [demoMode, selectedWorkspaceId]);
   // In demo mode there's no auth/role backend, so /api/team/my-role never
   // resolves a role — treat the demo viewer as a manager so the full Core
   // sidebar (Sessions, Inbox, Contacts, Messages, Webhooks, Team, Developer,
@@ -201,10 +206,10 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
     let active = true;
     fetch("/api/settings/workspace")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (active && d?.logo) setLogo(d.logo as string); })
+      .then((d) => { if (active) setLogo(typeof d?.logo === "string" ? d.logo : null); })
       .catch(() => {});
     return () => { active = false; };
-  }, [demoMode]);
+  }, [demoMode, selectedWorkspaceId]);
 
   return (
     <Sidebar
@@ -212,7 +217,7 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
       onMouseEnter={isMobile ? undefined : () => setOpen(true)}
       onMouseLeave={isMobile ? undefined : () => setOpen(false)}
     >
-      <SidebarHeader className="px-4 py-3">
+      <SidebarHeader className="gap-2 px-3 py-3">
         {logo ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
@@ -225,6 +230,7 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
         ) : (
           <span className="text-primary font-bold text-lg tracking-tight">WaSphere</span>
         )}
+        <WorkspaceSwitcher demoMode={demoMode} />
       </SidebarHeader>
 
       <SidebarContent>

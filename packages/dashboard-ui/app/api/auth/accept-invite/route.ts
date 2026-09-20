@@ -1,5 +1,6 @@
 import { cookies } from "next/headers"
 import { serverPost } from "@/lib/server-fetch"
+import { WORKSPACE_COOKIE } from "@/lib/workspaces"
 
 const SECURE = process.env.NODE_ENV === "production"
 
@@ -29,6 +30,13 @@ export async function POST(request: Request) {
   const cookieStore = await cookies()
   cookieStore.set("wa_access", data.accessToken, { httpOnly: true, secure: SECURE, sameSite: "lax", path: "/", maxAge: 900 })
   cookieStore.set("wa_refresh", data.refreshToken, { httpOnly: true, secure: SECURE, sameSite: "lax", path: "/", maxAge: 604800 })
+  cookieStore.set(WORKSPACE_COOKIE, data.workspace.id, {
+    httpOnly: true,
+    secure: SECURE,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  })
 
   return Response.json({ user: data.user, workspace: data.workspace })
 }

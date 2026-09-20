@@ -3,13 +3,11 @@ import { redirect } from "next/navigation"
 import { ApiError } from "@/components/ui/api-error"
 import { ProjectsView } from "@/components/projects/projects-view"
 import type { ProjectRoute } from "@/components/projects/types"
-import { serverGet } from "@/lib/server-fetch"
+import { resolveWorkspaceId, serverGet } from "@/lib/server-fetch"
 
 async function workspaceId(token: string): Promise<string | null> {
-  const { ok, data } = await serverGet<Array<{ id: string }> | { workspaces: Array<{ id: string }> }>("/workspaces", token)
-  if (!ok || !data) return null
-  const rows = Array.isArray(data) ? data : (data.workspaces ?? [])
-  return rows[0]?.id ?? null
+  const { workspaceId: selectedId } = await resolveWorkspaceId(token)
+  return selectedId
 }
 
 export default async function ProjectsPage() {

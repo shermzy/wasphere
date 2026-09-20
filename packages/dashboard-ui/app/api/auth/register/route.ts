@@ -1,4 +1,5 @@
 import { cookies } from "next/headers"
+import { WORKSPACE_COOKIE } from "@/lib/workspaces"
 
 const API_BASE = process.env.DASHBOARD_API_URL ?? "http://localhost:3000"
 const SECURE = process.env.NODE_ENV === "production"
@@ -42,6 +43,15 @@ export async function POST(request: Request) {
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
   })
+  if (data.workspace?.id) {
+    cookieStore.set(WORKSPACE_COOKIE, data.workspace.id, {
+      httpOnly: true,
+      secure: SECURE,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+    })
+  }
 
   return Response.json({ ok: true }, { status: 201 })
 }

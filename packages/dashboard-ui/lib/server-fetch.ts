@@ -10,7 +10,9 @@
 
 import * as http from "node:http"
 import * as https from "node:https"
+import { cookies } from "next/headers"
 import { DEMO_MODE, demoApiResponse } from "./demo"
+import { WORKSPACE_COOKIE } from "./workspaces"
 
 export const API_BASE = process.env.DASHBOARD_API_URL ?? "http://localhost:3000"
 
@@ -169,7 +171,11 @@ export async function probeWaServer(
 }
 
 /**
- * Resolves the first workspace ID for the authenticated user.
+ * Resolves the selected workspace ID for the authenticated user.
+ *
+ * The selection is stored in an HttpOnly cookie after the dashboard validates
+ * it against the user's membership list. If the cookie is absent or stale,
+ * the first available workspace remains the safe default.
  *
  * Returns { workspaceId, wsError } where:
  *   - workspaceId is the resolved ID on success (wsError is null)
@@ -202,6 +208,10 @@ export async function resolveWorkspaceId(
   if (!list[0]) {
     return { workspaceId: null, wsError: Response.json({ message: "No workspace found" }, { status: 404 }) }
   }
-  return { workspaceId: list[0].id, wsError: null }
+  const selectedWorkspaceId = (await cookies()).get(WORKSPACE_COOKIE)?.value
+  const selected = selectedWorkspaceId
+    ? list.find((workspace) => workspace.id === selectedWorkspaceId)
+    : null
+  return { workspaceId: selected?.id ?? list[0].id, wsError: null }
 }
 

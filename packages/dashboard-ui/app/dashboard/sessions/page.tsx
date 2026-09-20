@@ -8,13 +8,11 @@ import {
 import { AntiBanControls } from "@/components/settings/anti-ban-controls"
 import { type SessionSummary } from "@/lib/session-config"
 
-import { serverGet } from "@/lib/server-fetch"
+import { resolveWorkspaceId, serverGet } from "@/lib/server-fetch"
 
 async function fetchWorkspaceId(token: string): Promise<string | null> {
-  const { ok, data } = await serverGet<Array<{ id: string }> | { workspaces: Array<{ id: string }> }>("/workspaces", token)
-  if (!ok || !data) return null
-  const list = Array.isArray(data) ? data : (data.workspaces ?? [])
-  return list[0]?.id ?? null
+  const { workspaceId } = await resolveWorkspaceId(token)
+  return workspaceId
 }
 
 async function fetchSessions(

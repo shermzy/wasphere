@@ -13,6 +13,7 @@ import { DonutChart } from "@/components/overview/donut-chart"
 import { ActivityFeed, type ActivityItem } from "@/components/overview/activity-feed"
 
 import { serverGet } from "@/lib/server-fetch"
+import { WORKSPACE_COOKIE } from "@/lib/workspaces"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,8 @@ export default async function OverviewPage() {
     )
   }
 
-  const workspace = workspaces[0]
+  const selectedWorkspaceId = cookieStore.get(WORKSPACE_COOKIE)?.value
+  const workspace = workspaces.find((candidate) => candidate.id === selectedWorkspaceId) ?? workspaces[0]
 
   const [sessions, serverOnline, stats] = await Promise.all([
     workspace.waServerConfigured

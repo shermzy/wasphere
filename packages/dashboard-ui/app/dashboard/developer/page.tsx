@@ -2,7 +2,7 @@ import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { DeveloperPanel } from "@/components/developer/developer-panel"
 
-import { serverGet } from "@/lib/server-fetch"
+import { resolveWorkspaceId, serverGet } from "@/lib/server-fetch"
 
 interface Workspace {
   id: string
@@ -12,10 +12,7 @@ interface Workspace {
 }
 
 async function fetchWorkspace(token: string): Promise<Workspace | null> {
-  const list = await serverGet<Array<{ id: string }> | { workspaces: Array<{ id: string }> }>("/workspaces", token)
-  if (!list.ok || !list.data) return null
-  const workspaces = Array.isArray(list.data) ? list.data : (list.data.workspaces ?? [])
-  const workspaceId = workspaces[0]?.id
+  const { workspaceId } = await resolveWorkspaceId(token)
   if (!workspaceId) return null
 
   const detail = await serverGet<Workspace>(`/workspaces/${workspaceId}`, token)

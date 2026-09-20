@@ -4,13 +4,10 @@ import { existsSync, readFileSync } from "node:fs"
 import { SettingsForm, type Workspace } from "@/components/settings/settings-form"
 import { LogoBrandingCard } from "@/components/settings/logo-branding-card"
 
-import { serverGet } from "@/lib/server-fetch"
+import { resolveWorkspaceId, serverGet } from "@/lib/server-fetch"
 
 async function fetchWorkspace(token: string): Promise<{ workspace: Workspace; workspaceId: string } | null> {
-  const list = await serverGet<Array<{ id: string }> | { workspaces: Array<{ id: string }> }>("/workspaces", token)
-  if (!list.ok || !list.data) return null
-  const workspaces = Array.isArray(list.data) ? list.data : (list.data.workspaces ?? [])
-  const workspaceId = workspaces[0]?.id
+  const { workspaceId } = await resolveWorkspaceId(token)
   if (!workspaceId) return null
 
   const detail = await serverGet<Workspace>(`/workspaces/${workspaceId}`, token)

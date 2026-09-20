@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { WORKSPACE_COOKIE } from "@/lib/workspaces";
 
 const API_BASE = process.env.DASHBOARD_API_URL ?? "http://localhost:3000";
 
@@ -18,6 +19,7 @@ export async function POST() {
 
   cookieStore.set("wa_access", "", { maxAge: 0, path: "/" });
   cookieStore.set("wa_refresh", "", { maxAge: 0, path: "/" });
+  cookieStore.set(WORKSPACE_COOKIE, "", { maxAge: 0, path: "/" });
 
   return new Response(null, { status: 200 });
 }

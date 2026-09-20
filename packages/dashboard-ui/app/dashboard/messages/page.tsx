@@ -2,7 +2,7 @@ import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { MessagesPanel } from "@/components/messages/messages-panel"
 
-import { serverGet } from "@/lib/server-fetch"
+import { resolveWorkspaceId, serverGet } from "@/lib/server-fetch"
 
 interface SessionRaw {
   id: string
@@ -13,10 +13,8 @@ interface SessionRaw {
 }
 
 async function fetchWorkspaceId(token: string): Promise<string | null> {
-  const { ok, data } = await serverGet<Array<{ id: string }> | { workspaces: Array<{ id: string }> }>("/workspaces", token)
-  if (!ok || !data) return null
-  const list = Array.isArray(data) ? data : (data.workspaces ?? [])
-  return list[0]?.id ?? null
+  const { workspaceId } = await resolveWorkspaceId(token)
+  return workspaceId
 }
 
 async function fetchSessions(
