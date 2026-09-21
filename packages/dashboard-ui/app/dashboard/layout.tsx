@@ -25,7 +25,7 @@ export default async function DashboardLayout({
   return (
     <AuthProvider>
       <WorkspaceProvider>
-        <SidebarProvider defaultOpen={false}>
+        <SidebarProvider>
           <AppSidebar demoMode={DEMO_MODE} />
           <div className="flex h-screen min-h-0 flex-1 flex-col overflow-hidden">
             <AppHeader />

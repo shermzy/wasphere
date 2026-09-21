@@ -162,7 +162,7 @@ function ExternalNavItem({
 
 export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
   const pathname = usePathname();
-  const { state, setOpen, isMobile } = useSidebar();
+  const { state, isMobile } = useSidebar();
   const { selectedWorkspaceId } = useWorkspace();
 
   // Nav visibility is driven by the member's effective capabilities. Owners and
@@ -191,8 +191,7 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
     if (caps === null) return false; // still loading — hide gated items
     return i.cap ? caps.includes(i.cap) : false;
   });
-  // On mobile the sidebar is a full drawer — never icon-collapse it, and the
-  // hover-to-expand behaviour is desktop-only.
+  // On mobile the sidebar is a full drawer — never icon-collapse it.
   const collapsed = !isMobile && state === "collapsed";
 
   // In demo mode the local API-docs proxy has no backend, so link to the public
@@ -212,11 +211,7 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
   }, [demoMode, selectedWorkspaceId]);
 
   return (
-    <Sidebar
-      collapsible="icon"
-      onMouseEnter={isMobile ? undefined : () => setOpen(true)}
-      onMouseLeave={isMobile ? undefined : () => setOpen(false)}
-    >
+    <Sidebar collapsible="icon">
       <SidebarHeader className="gap-2 px-3 py-3">
         {logo ? (
           /* eslint-disable-next-line @next/next/no-img-element */
