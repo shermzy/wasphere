@@ -14,7 +14,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { useWorkspace } from "@/components/workspaces/workspace-provider"
 import { cn } from "@/lib/utils"
+import { workspaceSessionId } from "@/lib/workspace-session-id"
 
 const SESSION_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/
 const META_DOCS = "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
@@ -47,6 +49,7 @@ const PROVIDERS: { value: Provider; title: string; tradeoff: string }[] = [
 ]
 
 export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogProps) {
+  const { selectedWorkspaceId } = useWorkspace()
   const [provider, setProvider] = React.useState<Provider>("baileys")
   const [sessionId, setSessionId] = React.useState("")
   const [proxy, setProxy] = React.useState("")
@@ -66,6 +69,10 @@ export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogP
   const [webhookBase, setWebhookBase] = React.useState<string | null>(null)
 
   const isMeta = provider === "meta"
+
+  React.useEffect(() => {
+    if (open) setSessionId((current) => current || workspaceSessionId(selectedWorkspaceId))
+  }, [open, selectedWorkspaceId])
 
   // Pull the wa-server's public URL so we can show the real callback URL.
   React.useEffect(() => {
@@ -224,6 +231,9 @@ export function NewSessionDialog({ open, onClose, onCreated }: NewSessionDialogP
               onChange={(e) => setSessionId(e.target.value)}
               autoFocus
             />
+            <p className="text-xs text-muted-foreground">
+              Pre-filled from the active workspace so its WhatsApp QR and connection stay isolated.
+            </p>
             {validationError && <p className="text-xs text-destructive">{validationError}</p>}
           </Field>
 
