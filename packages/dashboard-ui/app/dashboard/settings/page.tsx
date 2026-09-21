@@ -3,16 +3,21 @@ import { redirect } from "next/navigation"
 import { existsSync, readFileSync } from "node:fs"
 import { SettingsForm, type Workspace } from "@/components/settings/settings-form"
 import { LogoBrandingCard } from "@/components/settings/logo-branding-card"
+import { NotionMcpCard } from "@/components/settings/notion-mcp-card"
 
 import { resolveWorkspaceId, serverGet } from "@/lib/server-fetch"
 
-async function fetchWorkspace(token: string): Promise<{ workspace: Workspace; workspaceId: string } | null> {
+async function fetchWorkspace(token: string): Promise<{ workspace: Workspace; canManageApiKeys: boolean } | null> {
   const { workspaceId } = await resolveWorkspaceId(token)
   if (!workspaceId) return null
 
   const detail = await serverGet<Workspace>(`/workspaces/${workspaceId}`, token)
   if (!detail.ok || !detail.data) return null
-  return { workspace: detail.data, workspaceId }
+  const access = await serverGet<{ capabilities?: string[] }>(`/workspaces/${workspaceId}/my-role`, token)
+  return {
+    workspace: detail.data,
+    canManageApiKeys: Boolean(access.ok && access.data?.capabilities?.includes("api_keys")),
+  }
 }
 
 /**
@@ -49,12 +54,14 @@ export default async function SettingsPage() {
     redirect("/login?reason=expired")
   }
 
-  const { workspace } = result
+  const { workspace, canManageApiKeys } = result
+  const mcpUrl = process.env.MCP_PUBLIC_URL?.trim() || "https://wa-gateway-api.t3.group/mcp"
 
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-2xl font-semibold">Settings</h1>
       <SettingsForm workspace={workspace} suggestedWaServerUrl={suggestWaServerUrl()} />
+      <NotionMcpCard canManageApiKeys={canManageApiKeys} mcpUrl={mcpUrl} />
       <LogoBrandingCard initialLogo={workspace.logo} />
     </div>
   )
