@@ -96,6 +96,7 @@ export class ProjectsService {
   }
 
   private async requireConnectedSession(principal: Principal, workspaceId: string, sessionId: string): Promise<WaConfig> {
+    await this.workspaces.assertProviderSession(principal.userId, workspaceId, sessionId);
     const config = await this.waConfig(principal, workspaceId);
     await this.assertConnectedSession(config, sessionId);
     return config;

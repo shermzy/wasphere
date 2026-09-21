@@ -31,7 +31,10 @@ test('binding requires confirmation and stores the chosen exact group ID with an
       projectRouteAudit: { create: async (args) => { writes.push(['audit', args]); } },
     }),
   };
-  const workspaces = { getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }) };
+  const workspaces = {
+    assertProviderSession: async () => {},
+    getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
+  };
   const service = new ProjectsService(prisma, workspaces);
   const dto = { name: 'Operations', routeKey: 'operations', sessionId: 'session-1', targetJid: 'chat-2@g.us' };
   await assert.rejects(() => service.create(principal, workspaceId, { ...dto, confirmed: false }), /Confirm the exact route/);
@@ -66,6 +69,7 @@ test('binding rejects a direct chat absent from the selected session', async () 
     $transaction: async () => { throw new Error('must not write'); },
   };
   const service = new ProjectsService(prisma, {
+    assertProviderSession: async () => {},
     getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
   });
   const originalFetch = globalThis.fetch;
@@ -92,6 +96,7 @@ test('sync stores exact WaSphere group metadata inside the active workspace', as
     }),
   };
   const service = new ProjectsService(prisma, {
+    assertProviderSession: async () => {},
     getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
   });
   const originalFetch = globalThis.fetch;
@@ -121,6 +126,7 @@ test('sync aborts if the session disconnects while WaSphere metadata is loading'
     workspaceMember: { findUnique: async () => member() },
     $transaction: async () => { throw new Error('must not write'); },
   }, {
+    assertProviderSession: async () => {},
     getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
   });
   const originalFetch = globalThis.fetch;
@@ -161,6 +167,7 @@ test('enable rejects a concurrent confirmed retarget instead of restoring the st
       projectRoute: { updateMany: async () => ({ count: 0 }) },
     }),
   }, {
+    assertProviderSession: async () => {},
     getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
   });
   const originalFetch = globalThis.fetch;
@@ -198,6 +205,7 @@ test('combined updates audit every change and return live availability', async (
       projectRouteAudit: { create: async ({ data }) => { actions.push(data.action); } },
     }),
   }, {
+    assertProviderSession: async () => {},
     getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
   });
   const originalFetch = globalThis.fetch;

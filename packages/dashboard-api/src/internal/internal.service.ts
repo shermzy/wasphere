@@ -44,8 +44,8 @@ export class InternalService {
   }
 
   // Returns immediately — fanout runs in the background.
-  // Design: workspaceId comes from the URL path, so wa-server code is unchanged;
-  // each workspace's DASHBOARD_WEBHOOK_URL is configured to include its own UUID.
+  // The controller resolves the exact provider session to its owning workspace
+  // before fan-out reaches this service.
   fanoutWebhookEvent(workspaceId: string, dto: WebhookEventDto): void {
     this.runFanout(workspaceId, dto).catch((err: unknown) => {
       this.logger.error(

@@ -4,10 +4,11 @@ import { InboxModule } from '../inbox/inbox.module';
 import { InternalController } from './internal.controller';
 import { InternalService } from './internal.service';
 import { InternalSecretGuard } from './internal-secret.guard';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 
 // InboxModule -> InboxIngestService persists inbound messages alongside fan-out
 @Module({
-  imports: [WebhooksModule, InboxModule],
+  imports: [WebhooksModule, InboxModule, WorkspacesModule],
   controllers: [InternalController],
   providers: [InternalService, InternalSecretGuard],
 })

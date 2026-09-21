@@ -101,7 +101,7 @@ export function WorkspaceSwitcher({ demoMode = false }: { demoMode?: boolean }) 
                 <DropdownMenuItem disabled className="whitespace-normal text-destructive">
                   {error}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void reloadWorkspaces()}>
+                <DropdownMenuItem onClick={() => void reloadWorkspaces()}>
                   <RefreshCw size={14} /> Try again
                 </DropdownMenuItem>
               </>
@@ -109,7 +109,7 @@ export function WorkspaceSwitcher({ demoMode = false }: { demoMode?: boolean }) 
             {workspaces.map((workspace) => (
               <DropdownMenuItem
                 key={workspace.id}
-                onSelect={() => void handleSelect(workspace.id)}
+                onClick={() => void handleSelect(workspace.id)}
                 className={workspace.id === selectedWorkspace?.id ? "bg-accent" : ""}
               >
                 <WorkspaceMark name={workspace.name} />

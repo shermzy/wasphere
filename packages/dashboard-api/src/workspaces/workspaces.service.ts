@@ -51,7 +51,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
   ): Promise<void> {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await this.registerCallback(workspaceId, waServerUrl, token);
+        await this.registerCallback(waServerUrl, token);
         this.logger.log(`[Bootstrap] Callback registered for workspace ${workspaceId} (attempt ${attempt})`);
         return;
       } catch (err) {
@@ -83,8 +83,26 @@ export class WorkspacesService implements OnApplicationBootstrap {
 
   async create(userId: string, dto: CreateWorkspaceDto) {
     const { workspace } = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const configuredWorkspaces = await tx.workspace.findMany({
+        where: {
+          ownerId: userId,
+          waServerUrl: { not: null },
+          waServerToken: { not: null },
+          waServerTokenIv: { not: null },
+        },
+        select: { waServerUrl: true, waServerToken: true, waServerTokenIv: true },
+      });
+      const distinctConnections = new Map(
+        configuredWorkspaces.map((connection) => [
+          `${connection.waServerUrl}\u0000${connection.waServerToken}\u0000${connection.waServerTokenIv}`,
+          connection,
+        ]),
+      );
+      const sharedConnection = distinctConnections.size === 1
+        ? distinctConnections.values().next().value
+        : null;
       const workspace = await tx.workspace.create({
-        data: { name: dto.name, ownerId: userId },
+        data: { name: dto.name, ownerId: userId, ...(sharedConnection ?? {}) },
       });
       await tx.workspaceMember.create({
         data: { workspaceId: workspace.id, userId, role: 'OWNER' },
@@ -164,7 +182,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
 
     // Auto-register callback so wa-server knows where to send events
     try {
-      await this.registerCallback(workspaceId, dto.waServerUrl, dto.waServerToken);
+      await this.registerCallback(dto.waServerUrl, dto.waServerToken);
     } catch (err) {
       this.logger.warn(`[SetWaServer] Callback registration failed for workspace ${workspaceId}: ${(err as Error).message}`);
     }
@@ -203,6 +221,55 @@ export class WorkspacesService implements OnApplicationBootstrap {
 
     const token = this.encryption.decrypt(w.waServerToken, w.waServerTokenIv);
     return { waServerUrl: w.waServerUrl, token };
+  }
+
+  async listProviderSessionIds(userId: string, workspaceId: string): Promise<Set<string>> {
+    await this.requireMember(userId, workspaceId);
+    const rows = await this.prisma.workspaceSession.findMany({
+      where: { workspaceId },
+      select: { providerSessionId: true },
+    });
+    return new Set(rows.map((row) => row.providerSessionId));
+  }
+
+  async reserveProviderSession(userId: string, workspaceId: string, providerSessionId: string): Promise<boolean> {
+    await this.requireMember(userId, workspaceId);
+    const existing = await this.prisma.workspaceSession.findUnique({ where: { providerSessionId } });
+    if (existing) {
+      if (existing.workspaceId !== workspaceId) {
+        throw new ForbiddenException('Session ID is assigned to another workspace');
+      }
+      return false;
+    }
+    try {
+      await this.prisma.workspaceSession.create({ data: { workspaceId, providerSessionId } });
+      return true;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ForbiddenException('Session ID is assigned to another workspace');
+      }
+      throw error;
+    }
+  }
+
+  async assertProviderSession(userId: string, workspaceId: string, providerSessionId: string): Promise<void> {
+    await this.requireMember(userId, workspaceId);
+    const session = await this.prisma.workspaceSession.findUnique({ where: { providerSessionId } });
+    if (!session || session.workspaceId !== workspaceId) {
+      throw new NotFoundException('Session not found in this workspace');
+    }
+  }
+
+  async removeProviderSession(workspaceId: string, providerSessionId: string): Promise<void> {
+    await this.prisma.workspaceSession.deleteMany({ where: { workspaceId, providerSessionId } });
+  }
+
+  async workspaceForProviderSession(providerSessionId: string): Promise<string | null> {
+    const session = await this.prisma.workspaceSession.findUnique({
+      where: { providerSessionId },
+      select: { workspaceId: true },
+    });
+    return session?.workspaceId ?? null;
   }
 
   async getAuditLogs(workspaceId: string, userId: string, query: GetAuditLogsQueryDto) {
@@ -358,9 +425,9 @@ export class WorkspacesService implements OnApplicationBootstrap {
     };
   }
 
-  private registerCallback(workspaceId: string, waServerUrl: string, token: string): Promise<void> {
+  private registerCallback(waServerUrl: string, token: string): Promise<void> {
     const base = (process.env.DASHBOARD_INTERNAL_URL ?? 'http://dashboard-api:3000').replace(/\/$/, '');
-    const callbackUrl = `${base}/internal/webhook-event/${workspaceId}`;
+    const callbackUrl = `${base}/internal/webhook-event`;
     const body = JSON.stringify({ url: callbackUrl });
 
     return new Promise<void>((resolve, reject) => {
@@ -414,5 +481,13 @@ export class WorkspacesService implements OnApplicationBootstrap {
     if (membership.role !== 'OWNER') {
       throw new ForbiddenException('Owner access required');
     }
+  }
+
+  private async requireMember(userId: string, workspaceId: string): Promise<void> {
+    const membership = await this.prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: { id: true },
+    });
+    if (!membership) throw new ForbiddenException('Not a member of this workspace');
   }
 }

@@ -80,6 +80,7 @@ model Workspace {
   messages      Message[]
   projectRoutes ProjectRoute[]
   projectRouteAudits ProjectRouteAudit[]
+  sessions           WorkspaceSession[]
 
   @@index([ownerId])
   @@map("workspaces")
@@ -337,6 +338,19 @@ model Conversation {
   @@unique([workspaceId, sessionId, contactId])
   @@index([workspaceId, status, lastMessageAt(sort: Desc)])
   @@map("conversations")
+}
+
+model WorkspaceSession {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String   @map("workspace_id") @db.Uuid
+  providerSessionId String   @unique @map("provider_session_id")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, providerSessionId])
+  @@index([workspaceId])
+  @@map("workspace_sessions")
 }
 
 // ---------------------------------------------------------------------------

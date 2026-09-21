@@ -45,7 +45,7 @@ function previewFor(type: string, body: string | null): string {
 
 /**
  * Persists inbound/outbound WhatsApp messages into the Inbox tables. Hooked into
- * the existing `POST /internal/webhook-event/:workspaceId` path alongside the
+ * the existing `POST /internal/webhook-event` path alongside the
  * webhook fan-out (it does not replace it). Idempotent on (workspace, waMessageId).
  */
 const STATUS_RANK: Record<string, number> = { SENT: 1, DELIVERED: 2, READ: 3 };

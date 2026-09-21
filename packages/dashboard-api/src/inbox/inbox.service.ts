@@ -178,6 +178,7 @@ export class InboxService {
     dto: { sessionId: string; to: string; text: string },
   ): Promise<{ conversationId: string }> {
     await this.assertMember(workspaceId, userId);
+    await this.workspaces.assertProviderSession(userId, workspaceId, dto.sessionId);
     const phone = String(dto.to).replace(/[^0-9]/g, '');
     if (phone.length < 6) throw new BadRequestException('Enter a valid phone number with country code.');
     const jid = `${phone}@s.whatsapp.net`;
@@ -462,6 +463,7 @@ export class InboxService {
   }
 
   private async assertRouteSessionAvailable(userId: string, workspaceId: string, sessionId: string): Promise<void> {
+    await this.workspaces.assertProviderSession(userId, workspaceId, sessionId);
     const { waServerUrl, token } = await this.workspaces.getDecryptedToken(userId, workspaceId);
     let response: globalThis.Response;
     try {
