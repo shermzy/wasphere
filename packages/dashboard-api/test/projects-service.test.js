@@ -238,6 +238,33 @@ test('a disabled route cannot resolve for agents or outbound sends', async () =>
   assert.equal(where.routeKey, 'operations');
 });
 
+test('route lookup requires the related conversation to belong to the authenticated workspace', async () => {
+  let where;
+  const service = new InboxService({
+    workspaceMember: { findUnique: async () => member() },
+    projectRoute: { findFirst: async (args) => { where = args.where; return null; } },
+  }, {}, {});
+
+  await assert.rejects(() => service.listRouteMatches('operator', workspaceId, '#operations'), /not found/);
+  assert.deepEqual(where.conversation, { is: { workspaceId } });
+});
+
+test('session-scoped route lookup rechecks provider-session ownership before querying', async () => {
+  let queried = false;
+  const service = new InboxService({
+    workspaceMember: { findUnique: async () => member() },
+    projectRoute: { findFirst: async () => { queried = true; return null; } },
+  }, {
+    assertProviderSession: async () => { throw new Error('Session not found in this workspace'); },
+  }, {});
+
+  await assert.rejects(
+    () => service.listRouteMatches('operator', workspaceId, '#operations', 'foreign-session'),
+    /Session not found in this workspace/,
+  );
+  assert.equal(queried, false);
+});
+
 test('reply rechecks that the conversation session still belongs to the active workspace', async () => {
   let fetched = false;
   const service = new InboxService({

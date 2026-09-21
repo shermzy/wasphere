@@ -449,13 +449,21 @@ export class InboxService {
     sessionScope?: string | null,
   ) {
     await this.assertMember(workspaceId, userId);
+    if (sessionScope) {
+      await this.workspaces.assertProviderSession(userId, workspaceId, sessionScope);
+    }
     const normalizedRouteKey = this.requireRouteKey(routeKey);
     const project = await this.prisma.projectRoute.findFirst({
       where: {
         workspaceId,
         routeKey: normalizedRouteKey,
         enabled: true,
-        ...(sessionScope ? { conversation: { is: { sessionId: sessionScope } } } : {}),
+        conversation: {
+          is: {
+            workspaceId,
+            ...(sessionScope ? { sessionId: sessionScope } : {}),
+          },
+        },
       },
       include: { conversation: { include: { contact: true } } },
     });

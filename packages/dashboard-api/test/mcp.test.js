@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+const { CombinedAuthGuard } = require('../dist/auth/combined-auth.guard.js');
 const { McpService } = require('../dist/mcp/mcp.service.js');
 
 async function connectMcp(inbox, permissions = ['messages:read', 'messages:send']) {
@@ -52,7 +53,9 @@ test('exposes route resolution and project update tools through MCP', async () =
   assert.equal(resolved.isError, undefined);
   assert.match(resolved.content[0].text, /Fairbreeze/);
   assert.equal(calls[0][1], 'user-id');
+  assert.equal(calls[0][2], 'workspace-id');
   assert.equal(calls[0][3], 'fairbreeze');
+  assert.equal(calls[0][4], null);
 
   const sent = await client.callTool({
     name: 'send_project_update',
@@ -61,11 +64,37 @@ test('exposes route resolution and project update tools through MCP', async () =
   assert.equal(sent.isError, undefined);
   assert.match(sent.content[0].text, /message-id/);
   assert.equal(calls[1][0], 'send');
+  assert.equal(calls[1][2], 'workspace-id');
   assert.equal(calls[1][3], 'fairbreeze');
   assert.deepEqual(calls[1][4], { kind: 'text', text: 'Status update' });
+  assert.equal(calls[1][5], null);
 
   await client.close();
   await server.close();
+});
+
+test('API-key authentication rejects a different workspace before controller execution', async () => {
+  const guard = new CombinedAuthGuard({
+    validateApiKey: async () => ({
+      userId: 'owner-id',
+      workspaceId: 'workspace-a',
+      apiKeyId: 'key-id',
+      permissions: ['messages:read'],
+      sessionScope: null,
+    }),
+  });
+  const request = {
+    headers: { authorization: 'Bearer wsk_cross_workspace_test' },
+    params: { workspaceId: 'workspace-b' },
+  };
+  const context = {
+    switchToHttp: () => ({ getRequest: () => request }),
+  };
+
+  await assert.rejects(
+    () => guard.canActivate(context),
+    /API key is not authorized for this workspace/,
+  );
 });
 
 test('does not send when the API key lacks messages:send', async () => {
