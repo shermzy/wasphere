@@ -26,6 +26,18 @@ async function fetchSessions(
   return Array.isArray(data) ? data : (data.sessions ?? [])
 }
 
+async function fetchSessionAccess(workspaceId: string, token: string) {
+  const { ok, data } = await serverGet<{ role: string; capabilities: string[] }>(
+    `/workspaces/${workspaceId}/my-role`, token
+  )
+  if (!ok || !data) return { canCreate: false, canManage: false }
+  const canManage = data.role === "OWNER" || data.role === "ADMIN" || data.capabilities.includes("sessions")
+  return {
+    canManage,
+    canCreate: canManage || data.capabilities.includes("sessions_create"),
+  }
+}
+
 export default async function SessionsPage() {
   const cookieStore = await cookies()
   let token = cookieStore.get("wa_access")?.value ?? ""
@@ -40,7 +52,10 @@ export default async function SessionsPage() {
     redirect("/login?reason=expired")
   }
 
-  const sessions = await fetchSessions(workspaceId, token)
+  const [sessions, access] = await Promise.all([
+    fetchSessions(workspaceId, token),
+    fetchSessionAccess(workspaceId, token),
+  ])
 
   if (sessions === null) {
     return (
@@ -60,8 +75,8 @@ export default async function SessionsPage() {
         <h1 className="text-2xl font-semibold text-foreground">Sessions</h1>
         <p className="text-sm text-zinc-700 dark:text-zinc-300">Manage WhatsApp sessions connected to this workspace.</p>
       </div>
-      <SessionsTable initialSessions={sessions} />
-      <AntiBanControls sessions={sessions as SessionSummary[]} />
+      <SessionsTable initialSessions={sessions} canCreate={access.canCreate} canManage={access.canManage} />
+      {access.canManage && <AntiBanControls sessions={sessions as SessionSummary[]} />}
     </div>
   )
 }

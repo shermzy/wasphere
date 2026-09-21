@@ -116,7 +116,7 @@ export class AuthService implements OnModuleInit {
       });
       // Seed a default agent role so the invite picker is never empty.
       await tx.customRole.create({
-        data: { workspaceId: newWorkspace.id, name: 'Agent', capabilities: ['inbox', 'contacts'] },
+        data: { workspaceId: newWorkspace.id, name: 'Agent', capabilities: ['inbox', 'contacts', 'sessions_create'] },
       });
       return { user: newUser, workspace: newWorkspace };
     });

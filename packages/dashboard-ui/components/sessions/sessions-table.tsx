@@ -56,6 +56,8 @@ function isMetaSession(session: Session): boolean {
 
 interface SessionsTableProps {
   initialSessions: Session[]
+  canCreate: boolean
+  canManage: boolean
 }
 
 function statusClassName(status: string): string {
@@ -83,7 +85,7 @@ function formatDate(iso: string | null | undefined): string {
   }
 }
 
-export function SessionsTable({ initialSessions }: SessionsTableProps) {
+export function SessionsTable({ initialSessions, canCreate, canManage }: SessionsTableProps) {
   const [sessions, setSessions] = React.useState<Session[]>(initialSessions)
   const [fetchError, setFetchError] = React.useState<string | null>(null)
   const [newDialogOpen, setNewDialogOpen] = React.useState(false)
@@ -184,7 +186,7 @@ export function SessionsTable({ initialSessions }: SessionsTableProps) {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Sessions</h1>
-        <Button onClick={() => setNewDialogOpen(true)}>New Session</Button>
+        {canCreate && <Button onClick={() => setNewDialogOpen(true)}>New Session</Button>}
       </div>
 
       {fetchError && (
@@ -246,7 +248,7 @@ export function SessionsTable({ initialSessions }: SessionsTableProps) {
                         View QR
                       </Button>
                     )}
-                    {!isMetaSession(session) && (session.status === "failed" || session.status === "disconnected" || session.status === "logged_out" || session.status === "qr_expired") && (
+                    {canManage && !isMetaSession(session) && (session.status === "failed" || session.status === "disconnected" || session.status === "logged_out" || session.status === "qr_expired") && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -255,7 +257,7 @@ export function SessionsTable({ initialSessions }: SessionsTableProps) {
                         Relink
                       </Button>
                     )}
-                    {session.status === "connected" && (
+                    {canManage && session.status === "connected" && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -264,13 +266,15 @@ export function SessionsTable({ initialSessions }: SessionsTableProps) {
                         Logout
                       </Button>
                     )}
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleDelete(session.id)}
-                    >
-                      Delete
-                    </Button>
+                    {canManage && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDelete(session.id)}
+                      >
+                        Delete
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>
@@ -280,14 +284,16 @@ export function SessionsTable({ initialSessions }: SessionsTableProps) {
         </div>
       )}
 
-      <NewSessionDialog
-        open={newDialogOpen}
-        onClose={() => setNewDialogOpen(false)}
-        onCreated={(session) => {
-          setNewDialogOpen(false)
-          handleSessionCreated(session as Session)
-        }}
-      />
+      {canCreate && (
+        <NewSessionDialog
+          open={newDialogOpen}
+          onClose={() => setNewDialogOpen(false)}
+          onCreated={(session) => {
+            setNewDialogOpen(false)
+            handleSessionCreated(session as Session)
+          }}
+        />
+      )}
 
       {qrSessionId && (
         <QrDialog

@@ -25,6 +25,7 @@ const CAP_LABELS: Record<string, string> = {
   inbox: "Inbox",
   contacts: "Contacts",
   messages: "Messages",
+  sessions_create: "Create sessions",
   sessions: "Sessions",
   webhooks: "Webhooks",
   api_keys: "API keys",

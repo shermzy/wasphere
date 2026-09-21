@@ -50,12 +50,12 @@ const NAV_ITEMS: {
   label: string;
   href: string;
   icon: React.ElementType;
-  cap?: string;
+  cap?: string | string[];
   always?: boolean;
   adminOnly?: boolean;
 }[] = [
   { label: "Overview", href: "/dashboard/overview", icon: LayoutDashboard, always: true },
-  { label: "Sessions", href: "/dashboard/sessions", icon: Smartphone, cap: "sessions" },
+  { label: "Sessions", href: "/dashboard/sessions", icon: Smartphone, cap: ["sessions", "sessions_create"] },
   { label: "Inbox", href: "/dashboard/inbox", icon: Inbox, cap: "inbox" },
   { label: "Projects", href: "/dashboard/projects", icon: FolderKanban, always: true },
   { label: "Contacts", href: "/dashboard/contacts", icon: Contact, cap: "contacts" },
@@ -189,7 +189,8 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
     if (i.adminOnly) return isManager;
     if (isManager) return true;
     if (caps === null) return false; // still loading — hide gated items
-    return i.cap ? caps.includes(i.cap) : false;
+    if (!i.cap) return false;
+    return (Array.isArray(i.cap) ? i.cap : [i.cap]).some((capability) => caps.includes(capability));
   });
   // On mobile the sidebar is a full drawer — never icon-collapse it.
   const collapsed = !isMobile && state === "collapsed";

@@ -8,6 +8,7 @@ import { WorkspaceRole } from '@prisma/client';
  *   inbox     — view + reply in the Inbox
  *   contacts  — view + edit the contact book
  *   messages  — the Messages page (manual / API sends)
+ *   sessions_create — create and link a workspace-owned WhatsApp session
  *   sessions  — manage WhatsApp connections (link/unlink numbers)
  *   webhooks  — manage outbound webhooks
  *   api_keys  — manage API keys (machine credentials)
@@ -20,6 +21,7 @@ export const CAPABILITIES = [
   'inbox',
   'contacts',
   'messages',
+  'sessions_create',
   'sessions',
   'webhooks',
   'api_keys',

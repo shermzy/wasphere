@@ -14,6 +14,7 @@ import { EncryptionService } from './encryption.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { SetWaServerDto } from './dto/set-wa-server.dto';
 import { GetAuditLogsQueryDto } from './dto/get-audit-logs-query.dto';
+import { Capability, resolveCapabilities } from '../lib/capabilities';
 
 @Injectable()
 export class WorkspacesService implements OnApplicationBootstrap {
@@ -109,7 +110,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
       });
       // Seed a default agent role so the invite picker is never empty.
       await tx.customRole.create({
-        data: { workspaceId: workspace.id, name: 'Agent', capabilities: ['inbox', 'contacts'] },
+        data: { workspaceId: workspace.id, name: 'Agent', capabilities: ['inbox', 'contacts', 'sessions_create'] },
       });
       return { workspace };
     });
@@ -489,5 +490,21 @@ export class WorkspacesService implements OnApplicationBootstrap {
       select: { id: true },
     });
     if (!membership) throw new ForbiddenException('Not a member of this workspace');
+  }
+
+  async assertAnyCapability(
+    userId: string,
+    workspaceId: string,
+    required: readonly Capability[],
+  ): Promise<void> {
+    const membership = await this.prisma.workspaceMember.findUnique({
+      where: { workspaceId_userId: { workspaceId, userId } },
+      select: { role: true, customRole: { select: { capabilities: true } } },
+    });
+    if (!membership) throw new ForbiddenException('Not a member of this workspace');
+    const granted = resolveCapabilities(membership.role, membership.customRole?.capabilities);
+    if (!required.some((capability) => granted.includes(capability))) {
+      throw new ForbiddenException('You do not have permission to manage this session');
+    }
   }
 }

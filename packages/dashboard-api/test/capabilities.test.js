@@ -39,6 +39,11 @@ test('a role can grant any capability, including sensitive ones', () => {
   assert.equal(hasCapability('MEMBER', ['api_keys'], 'settings'), false);
 });
 
+test('a member can be granted session creation without session administration', () => {
+  assert.equal(hasCapability('MEMBER', ['sessions_create'], 'sessions_create'), true);
+  assert.equal(hasCapability('MEMBER', ['sessions_create'], 'sessions'), false);
+});
+
 test('sanitizeCapabilities drops invalid values and dedupes', () => {
   assert.deepEqual(sanitizeCapabilities(['inbox', 'inbox', 'nonsense', 42, 'settings']).sort(), ['inbox', 'settings']);
   assert.deepEqual(sanitizeCapabilities(null), []);

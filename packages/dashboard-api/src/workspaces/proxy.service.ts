@@ -15,6 +15,7 @@ import { Request, Response } from 'express';
 import { WorkspacesService } from './workspaces.service';
 import { proxyPermission, proxySessionId } from '../lib/proxy-permissions';
 import { hasPermission, PermissionScope, WILDCARD_PERMISSION } from '../lib/permissions';
+import { proxyCapabilityRequirement } from '../lib/proxy-capabilities';
 
 const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -98,6 +99,12 @@ export class ProxyService {
         if (pathSessionId !== sessionScope) {
           throw new ForbiddenException('API key is scoped to a different session');
         }
+      }
+    }
+    if (apiKeyPermissions === undefined) {
+      const required = proxyCapabilityRequirement(method, decodedPath);
+      if (required) {
+        await this.workspacesService.assertAnyCapability(userId, workspaceId, required);
       }
     }
 
