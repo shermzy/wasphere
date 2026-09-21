@@ -125,13 +125,7 @@ export function WorkspaceSwitcher({ demoMode = false }: { demoMode?: boolean }) 
           {!demoMode && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onSelect={(event) => {
-                  event.preventDefault()
-                  setOpen(false)
-                  setCreateOpen(true)
-                }}
-              >
+              <DropdownMenuItem onClick={() => setCreateOpen(true)}>
                 <Plus size={14} /> Create workspace
               </DropdownMenuItem>
             </>
