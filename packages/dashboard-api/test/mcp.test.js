@@ -1,8 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
+const { once } = require('node:events');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const { CombinedAuthGuard } = require('../dist/auth/combined-auth.guard.js');
+const { McpController } = require('../dist/mcp/mcp.controller.js');
 const { McpService } = require('../dist/mcp/mcp.service.js');
 
 async function connectMcp(inbox, permissions = ['messages:read', 'messages:send']) {
@@ -20,6 +23,53 @@ async function connectMcp(inbox, permissions = ['messages:read', 'messages:send'
   await client.connect(clientTransport);
   return { client, server };
 }
+
+test('MCP HTTP initialization responds with an SSE content type', async () => {
+  const controller = new McpController(new McpService({}));
+  const httpServer = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    req.body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    req.user = {
+      userId: 'user-id',
+      workspaceId: 'workspace-id',
+      apiKeyId: 'api-key-id',
+      permissions: ['messages:read'],
+      sessionScope: null,
+    };
+    await controller.handle(req, res);
+  });
+  httpServer.listen(0, '127.0.0.1');
+  await once(httpServer, 'listening');
+
+  try {
+    const address = httpServer.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/mcp`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'sse-test-client', version: '1.0.0' },
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const contentType = response.headers.get('content-type') ?? '';
+    await response.body?.cancel();
+    assert.match(contentType, /^text\/event-stream\b/);
+  } finally {
+    httpServer.closeAllConnections();
+    await new Promise((resolve) => httpServer.close(resolve));
+  }
+});
 
 test('exposes route resolution and project update tools through MCP', async () => {
   const calls = [];

@@ -26,7 +26,6 @@ export class McpController {
     const server = this.mcp.createServer(user as McpPrincipal);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
-      enableJsonResponse: true,
     });
 
     res.on('close', () => {
