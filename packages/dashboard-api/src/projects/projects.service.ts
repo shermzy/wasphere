@@ -209,16 +209,23 @@ export class ProjectsService {
 
     let config: WaConfig | null = null;
     let snapshot = { loaded: false, statuses: new Map<string, string>() };
+    let ownedSessionIds = new Set<string>();
     try {
-      config = await this.waConfig(principal, workspaceId);
-      snapshot = await this.loadSessionStatuses(config);
+      const candidateConfig = await this.waConfig(principal, workspaceId);
+      ownedSessionIds = await this.workspaces.listProviderSessionIds(principal.userId, workspaceId);
+      const candidateSnapshot = await this.loadSessionStatuses(candidateConfig);
+      candidateSnapshot.statuses = new Map(
+        [...candidateSnapshot.statuses].filter(([sessionId]) => ownedSessionIds.has(sessionId)),
+      );
+      config = candidateConfig;
+      snapshot = candidateSnapshot;
     } catch {
       // Observed direct chats remain useful when the WA directory is offline.
     }
 
-    const sessionIds = new Set<string>(conversations.map((conversation) => conversation.sessionId));
-    if (query.sessionId) sessionIds.add(query.sessionId);
-    for (const sessionId of snapshot.statuses.keys()) sessionIds.add(sessionId);
+    const sessionIds = query.sessionId
+      ? new Set(ownedSessionIds.has(query.sessionId) ? [query.sessionId] : [])
+      : ownedSessionIds;
 
     const targets = new Map<string, {
       sessionId: string;

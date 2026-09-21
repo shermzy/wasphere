@@ -238,6 +238,36 @@ test('a disabled route cannot resolve for agents or outbound sends', async () =>
   assert.equal(where.routeKey, 'operations');
 });
 
+test('reply rechecks that the conversation session still belongs to the active workspace', async () => {
+  let fetched = false;
+  const service = new InboxService({
+    workspaceMember: { findUnique: async () => member() },
+    conversation: {
+      findFirst: async () => ({
+        id: 'conversation-1', sessionId: 'foreign-session', sessionDeletedAt: null,
+        contact: { jid: 'foreign@g.us', phone: 'foreign@g.us' },
+      }),
+    },
+  }, {
+    assertProviderSession: async () => { throw new Error('Session not found in this workspace'); },
+    getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
+  }, {});
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetched = true;
+    return response({ messageId: 'unexpected' });
+  };
+  try {
+    await assert.rejects(
+      () => service.sendReply(principal.userId, workspaceId, 'conversation-1', { text: 'hello' }),
+      /Session not found in this workspace/,
+    );
+    assert.equal(fetched, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('classification audit is scoped to the authenticated workspace', async () => {
   let where;
   const prisma = {
@@ -248,4 +278,42 @@ test('classification audit is scoped to the authenticated workspace', async () =
   assert.deepEqual(await service.audit(principal, workspaceId, '50'), { events: [] });
   assert.deepEqual(where, { workspaceId });
   await assert.rejects(() => service.audit(principal, workspaceId, '10000'), /limit must be between/);
+});
+
+test('classification targets only load WaSphere chats from sessions owned by the active workspace', async () => {
+  const requested = [];
+  const service = new ProjectsService({
+    workspaceMember: { findUnique: async () => member() },
+    projectRoute: { findMany: async () => [] },
+    conversation: { findMany: async () => [] },
+    contact: { findMany: async () => [] },
+  }, {
+    getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
+    listProviderSessionIds: async () => new Set(['owned-session']),
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    requested.push(url);
+    if (url.endsWith('/api/sessions')) {
+      return response([
+        { id: 'owned-session', status: 'connected' },
+        { id: 'foreign-session', status: 'connected' },
+      ]);
+    }
+    if (url.endsWith('/api/sessions/owned-session/groups')) {
+      return response([{ id: 'owned@g.us', subject: 'Owned group' }]);
+    }
+    if (url.endsWith('/api/sessions/foreign-session/groups')) {
+      return response([{ id: 'foreign@g.us', subject: 'Foreign group' }]);
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  try {
+    const targets = await service.targets(principal, workspaceId, {});
+    assert.deepEqual(targets.map((target) => target.jid), ['owned@g.us']);
+    assert.deepEqual(await service.targets(principal, workspaceId, { sessionId: 'foreign-session' }), []);
+    assert.equal(requested.some((url) => url.includes('foreign-session/groups')), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

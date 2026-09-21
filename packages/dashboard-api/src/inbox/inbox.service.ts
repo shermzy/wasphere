@@ -262,6 +262,7 @@ export class InboxService {
       );
     }
 
+    await this.workspaces.assertProviderSession(userId, workspaceId, convo.sessionId);
     // getDecryptedToken re-checks membership + that the WA server is configured.
     const { waServerUrl, token } = await this.workspaces.getDecryptedToken(userId, workspaceId);
     const to = convo.contact.jid.endsWith('@g.us') ? convo.contact.jid : convo.contact.phone;
