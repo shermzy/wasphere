@@ -452,6 +452,7 @@ export class InboxService {
       where: {
         workspaceId,
         routeKey: normalizedRouteKey,
+        enabled: true,
         ...(sessionScope ? { conversation: { is: { sessionId: sessionScope } } } : {}),
       },
       include: { conversation: { include: { contact: true } } },

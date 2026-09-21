@@ -6,7 +6,7 @@ export interface ProjectTarget {
   type: "group" | "direct"
   name: string
   conversationId: string | null
-  assignedProject: { id: string; name: string; routeKey: string } | null
+  assignedProject: { id: string; name: string; routeKey: string; enabled: boolean } | null
   availability: ProjectAvailability
 }
 
@@ -15,6 +15,7 @@ export interface ProjectRoute {
   workspaceId: string
   name: string
   routeKey: string
+  enabled: boolean
   createdBy: string
   createdAt: string
   updatedAt: string
@@ -26,4 +27,14 @@ export interface ProjectRoute {
     name: string
   }
   availability: ProjectAvailability
+}
+
+export interface ProjectAuditEvent {
+  id: string
+  createdAt: string
+  action: string
+  routeKey: string
+  sessionId: string
+  targetJid: string
+  actorUserId: string
 }

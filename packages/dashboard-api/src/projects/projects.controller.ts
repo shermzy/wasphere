@@ -51,4 +51,16 @@ export class ProjectsController {
   targets(@Req() req: ProjectRequest, @Param('workspaceId') workspaceId: string, @Query() query: ProjectTargetsQueryDto) {
     return this.projects.targets(req.user, workspaceId, query);
   }
+
+  @Post('project-targets/sync')
+  @ApiOperation({ summary: 'Sync chat metadata from a connected WA session' })
+  syncTargets(@Req() req: ProjectRequest, @Param('workspaceId') workspaceId: string, @Body('sessionId') sessionId: string) {
+    return this.projects.syncTargets(req.user, workspaceId, sessionId);
+  }
+
+  @Get('projects/audit')
+  @ApiOperation({ summary: 'List project route classification history' })
+  audit(@Req() req: ProjectRequest, @Param('workspaceId') workspaceId: string, @Query('limit') limit?: string) {
+    return this.projects.audit(req.user, workspaceId, limit);
+  }
 }

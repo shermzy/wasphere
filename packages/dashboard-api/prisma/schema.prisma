@@ -79,6 +79,7 @@ model Workspace {
   conversations Conversation[]
   messages      Message[]
   projectRoutes ProjectRoute[]
+  projectRouteAudits ProjectRouteAudit[]
 
   @@index([ownerId])
   @@map("workspaces")
@@ -347,6 +348,7 @@ model ProjectRoute {
   conversationId String   @unique @map("conversation_id") @db.Uuid
   name           String
   routeKey       String   @map("route_key")
+  enabled        Boolean  @default(true)
   createdBy      String   @map("created_by") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz()
@@ -358,6 +360,23 @@ model ProjectRoute {
   @@unique([workspaceId, routeKey])
   @@index([workspaceId])
   @@map("project_routes")
+}
+
+model ProjectRouteAudit {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String   @map("workspace_id") @db.Uuid
+  projectRouteId String   @map("project_route_id") @db.Uuid
+  actorUserId    String   @map("actor_user_id") @db.Uuid
+  action         String
+  routeKey       String   @map("route_key")
+  sessionId      String   @map("session_id")
+  targetJid      String   @map("target_jid")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("project_route_audit")
 }
 
 // ---------------------------------------------------------------------------

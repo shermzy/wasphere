@@ -11,7 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { CreateProjectRouteDto, UpdateProjectRouteDto } from './dto/project-route.dto';
 import { ProjectTargetsQueryDto } from './dto/project-targets-query.dto';
-import { normalizeProjectRouteKey, slugifyProjectName } from './project-route-key';
+import { normalizeProjectRouteKey } from './project-route-key';
 
 type Principal = { userId: string; apiKeyId?: string };
 type SessionStatus = { id: string; status?: string };
@@ -20,6 +20,7 @@ type ProjectWithTarget = Prisma.ProjectRouteGetPayload<{
 }>;
 
 type WaConfig = { waServerUrl: string; token: string };
+const ROUTE_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 @Injectable()
 export class ProjectsService {
@@ -78,8 +79,7 @@ export class ProjectsService {
     }
   }
 
-  private async requireConnectedSession(principal: Principal, workspaceId: string, sessionId: string): Promise<WaConfig> {
-    const config = await this.waConfig(principal, workspaceId);
+  private async assertConnectedSession(config: WaConfig, sessionId: string): Promise<void> {
     let body: unknown;
     try {
       body = await this.getJson(config, `/api/sessions/${encodeURIComponent(sessionId)}`);
@@ -93,6 +93,11 @@ export class ProjectsService {
     if (status !== 'connected') {
       throw new ConflictException(`Session "${sessionId}" must be connected before assigning a project.`);
     }
+  }
+
+  private async requireConnectedSession(principal: Principal, workspaceId: string, sessionId: string): Promise<WaConfig> {
+    const config = await this.waConfig(principal, workspaceId);
+    await this.assertConnectedSession(config, sessionId);
     return config;
   }
 
@@ -130,9 +135,9 @@ export class ProjectsService {
 
     const contact = await this.prisma.contact.findUnique({
       where: { workspaceId_jid: { workspaceId, jid } },
-      include: { conversations: { where: { sessionId }, take: 1 } },
+      include: { conversations: { where: { sessionId, sessionDeletedAt: null }, take: 1 } },
     });
-    if (!contact) {
+    if (!contact || contact.conversations.length === 0) {
       throw new BadRequestException('Direct-chat targets must already be observed in Inbox or Contacts.');
     }
     return {
@@ -146,12 +151,13 @@ export class ProjectsService {
   private projectView(project: ProjectWithTarget, statuses?: Map<string, string>) {
     const { conversation } = project;
     const status = statuses?.get(conversation.sessionId);
-    const available = !conversation.sessionDeletedAt && (!statuses || status === 'connected');
+    const available = !conversation.sessionDeletedAt && status === 'connected';
     return {
       id: project.id,
       workspaceId: project.workspaceId,
       name: project.name,
       routeKey: project.routeKey,
+      enabled: project.enabled,
       createdBy: project.createdBy,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
@@ -219,15 +225,15 @@ export class ProjectsService {
       type: 'group' | 'direct';
       name: string;
       conversationId: string | null;
-      assignedProject: { id: string; name: string; routeKey: string } | null;
+      assignedProject: { id: string; name: string; routeKey: string; enabled: boolean } | null;
       availability: 'connected' | 'unavailable';
     }>();
 
     for (const contact of contacts) {
       if (contact.jid.endsWith('@g.us')) continue;
-      const observedSessions = query.sessionId
-        ? [query.sessionId]
-        : conversations.filter((conversation) => conversation.contactId === contact.id).map((conversation) => conversation.sessionId);
+      const observedSessions = conversations
+        .filter((conversation) => conversation.contactId === contact.id)
+        .map((conversation) => conversation.sessionId);
       for (const sessionId of new Set(observedSessions)) {
         const conversation = conversationByTarget.get(`${sessionId}:${contact.jid}`);
         const project = conversation ? projectByConversation.get(conversation.id) : undefined;
@@ -237,12 +243,26 @@ export class ProjectsService {
           type: 'direct',
           name: contact.savedName ?? contact.whatsappName ?? contact.phone,
           conversationId: conversation?.id ?? null,
-          assignedProject: project ? { id: project.id, name: project.name, routeKey: project.routeKey } : null,
+          assignedProject: project ? { id: project.id, name: project.name, routeKey: project.routeKey, enabled: project.enabled } : null,
           availability: snapshot.loaded && snapshot.statuses.get(sessionId) === 'connected' && !conversation?.sessionDeletedAt
             ? 'connected'
             : 'unavailable',
         });
       }
+    }
+
+    for (const conversation of conversations) {
+      if (!conversation.contact.jid.endsWith('@g.us')) continue;
+      const project = projectByConversation.get(conversation.id);
+      targets.set(`${conversation.sessionId}:${conversation.contact.jid}`, {
+        sessionId: conversation.sessionId,
+        jid: conversation.contact.jid,
+        type: 'group',
+        name: conversation.contact.savedName ?? conversation.contact.whatsappName ?? conversation.contact.phone,
+        conversationId: conversation.id,
+        assignedProject: project ? { id: project.id, name: project.name, routeKey: project.routeKey, enabled: project.enabled } : null,
+        availability: 'unavailable',
+      });
     }
 
     if (config) {
@@ -258,7 +278,7 @@ export class ProjectsService {
               type: 'group',
               name: group.subject,
               conversationId: conversation?.id ?? null,
-              assignedProject: project ? { id: project.id, name: project.name, routeKey: project.routeKey } : null,
+              assignedProject: project ? { id: project.id, name: project.name, routeKey: project.routeKey, enabled: project.enabled } : null,
               availability: 'connected',
             });
           }
@@ -274,15 +294,76 @@ export class ProjectsService {
       .sort((a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId));
   }
 
+  async syncTargets(principal: Principal, workspaceId: string, rawSessionId: unknown) {
+    await this.assertHumanMember(principal, workspaceId);
+    if (typeof rawSessionId !== 'string' || !rawSessionId.trim() || rawSessionId.length > 64) {
+      throw new BadRequestException('A valid session ID is required.');
+    }
+    const sessionId = rawSessionId.trim();
+    const config = await this.requireConnectedSession(principal, workspaceId, sessionId);
+    const groups = await this.fetchGroups(config, sessionId);
+    await this.assertConnectedSession(config, sessionId);
+
+    await this.prisma.$transaction(async (tx) => {
+      const member = await tx.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
+        select: { id: true },
+      });
+      if (!member) throw new ForbiddenException('Not a member of this workspace');
+      for (const group of groups) {
+        const contact = await tx.contact.upsert({
+          where: { workspaceId_jid: { workspaceId, jid: group.id } },
+          update: { whatsappName: group.subject },
+          create: { workspaceId, jid: group.id, phone: group.id, whatsappName: group.subject },
+        });
+        await tx.conversation.upsert({
+          where: { workspaceId_sessionId_contactId: { workspaceId, sessionId, contactId: contact.id } },
+          update: {},
+          create: { workspaceId, sessionId, contactId: contact.id },
+        });
+      }
+    });
+    return { synced: groups.length };
+  }
+
+  async audit(principal: Principal, workspaceId: string, rawLimit?: string) {
+    await this.assertHumanMember(principal, workspaceId);
+    const limit = rawLimit === undefined ? 50 : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException('limit must be between 1 and 100.');
+    }
+    const events = await this.prisma.projectRouteAudit.findMany({
+      where: { workspaceId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+    return { events };
+  }
+
+  private requireRouteKey(value: string): string {
+    const key = normalizeProjectRouteKey(value);
+    if (!ROUTE_KEY_PATTERN.test(key)) {
+      throw new BadRequestException('Route key must be 1–40 lowercase letters, numbers, or hyphens.');
+    }
+    return key;
+  }
+
   async create(principal: Principal, workspaceId: string, dto: CreateProjectRouteDto) {
     await this.assertHumanMember(principal, workspaceId);
+    if (dto.confirmed !== true) throw new BadRequestException('Confirm the exact route and chat before binding.');
     const name = dto.name.trim();
     if (!name) throw new BadRequestException('Project name cannot be empty.');
-    const routeKey = slugifyProjectName(name);
-    const target = await this.resolveTarget(principal, workspaceId, dto.sessionId.trim(), dto.targetJid);
+    const routeKey = this.requireRouteKey(dto.routeKey);
+    const sessionId = dto.sessionId.trim();
+    const target = await this.resolveTarget(principal, workspaceId, sessionId, dto.targetJid);
 
     try {
       const project = await this.prisma.$transaction(async (tx) => {
+        const member = await tx.workspaceMember.findUnique({
+          where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
+          select: { id: true },
+        });
+        if (!member) throw new ForbiddenException('Not a member of this workspace');
         const contact = await tx.contact.upsert({
           where: { workspaceId_jid: { workspaceId, jid: target.jid } },
           update: target.isGroup ? { whatsappName: target.name } : {},
@@ -294,16 +375,23 @@ export class ProjectsService {
           },
         });
         const conversation = await tx.conversation.upsert({
-          where: { workspaceId_sessionId_contactId: { workspaceId, sessionId: dto.sessionId.trim(), contactId: contact.id } },
+          where: { workspaceId_sessionId_contactId: { workspaceId, sessionId, contactId: contact.id } },
           update: { sessionDeletedAt: null },
-          create: { workspaceId, contactId: contact.id, sessionId: dto.sessionId.trim() },
+          create: { workspaceId, contactId: contact.id, sessionId },
         });
-        return tx.projectRoute.create({
+        const created = await tx.projectRoute.create({
           data: { workspaceId, conversationId: conversation.id, name, routeKey, createdBy: principal.userId },
           include: { conversation: { include: { contact: true } } },
         });
+        await tx.projectRouteAudit.create({
+          data: {
+            workspaceId, projectRouteId: created.id, actorUserId: principal.userId,
+            action: 'route.bound', routeKey, sessionId, targetJid: target.jid,
+          },
+        });
+        return created;
       });
-      return this.projectView(project, new Map([[dto.sessionId.trim(), 'connected']]));
+      return this.projectView(project, new Map([[sessionId, 'connected']]));
     } catch (error) {
       if ((error as { code?: string }).code === 'P2002') {
         throw new ConflictException('That route key or WhatsApp chat is already assigned to a project.');
@@ -321,16 +409,27 @@ export class ProjectsService {
     if (!existing) throw new NotFoundException('Project not found');
 
     const targetChanged = dto.sessionId !== undefined || dto.targetJid !== undefined;
+    if (targetChanged && dto.confirmed !== true) {
+      throw new BadRequestException('Confirm the exact route and chat before rebinding.');
+    }
     const sessionId = dto.sessionId?.trim() ?? existing.conversation.sessionId;
     const targetJid = dto.targetJid?.trim() ?? existing.conversation.contact.jid;
     const target = targetChanged
       ? await this.resolveTarget(principal, workspaceId, sessionId, targetJid)
       : null;
+    if (dto.enabled === true && !existing.enabled && !target) {
+      await this.resolveTarget(principal, workspaceId, sessionId, targetJid);
+    }
     const name = dto.name?.trim() ?? existing.name;
     if (!name) throw new BadRequestException('Project name cannot be empty.');
 
     try {
       const project = await this.prisma.$transaction(async (tx) => {
+        const member = await tx.workspaceMember.findUnique({
+          where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
+          select: { id: true },
+        });
+        if (!member) throw new ForbiddenException('Not a member of this workspace');
         let conversationId = existing.conversationId;
         if (target) {
           const contact = await tx.contact.upsert({
@@ -350,13 +449,51 @@ export class ProjectsService {
           });
           conversationId = conversation.id;
         }
-        return tx.projectRoute.update({
-          where: { id: existing.id },
-          data: { name, conversationId },
+        const conversationChanged = conversationId !== existing.conversationId;
+        const changes: Prisma.ProjectRouteUpdateManyMutationInput = {
+          ...(dto.name !== undefined && name !== existing.name ? { name } : {}),
+          ...(conversationChanged ? { conversationId } : {}),
+          ...(dto.enabled !== undefined && dto.enabled !== existing.enabled ? { enabled: dto.enabled } : {}),
+        };
+        if (Object.keys(changes).length === 0) return existing;
+        const result = await tx.projectRoute.updateMany({
+          where: { id: existing.id, workspaceId, updatedAt: existing.updatedAt },
+          data: changes,
+        });
+        if (result.count !== 1) {
+          throw new ConflictException('Project changed while this update was being confirmed. Reload and try again.');
+        }
+        const updated = await tx.projectRoute.findFirst({
+          where: { id: existing.id, workspaceId },
           include: { conversation: { include: { contact: true } } },
         });
+        if (!updated) throw new ConflictException('Project changed while this update was being confirmed. Reload and try again.');
+        const actions = [
+          ...(conversationChanged ? ['route.rebound'] : []),
+          ...(dto.name !== undefined && name !== existing.name ? ['route.renamed'] : []),
+          ...(dto.enabled !== undefined && dto.enabled !== existing.enabled
+            ? [dto.enabled ? 'route.enabled' : 'route.disabled']
+            : []),
+        ];
+        for (const action of actions) {
+          await tx.projectRouteAudit.create({
+            data: {
+              workspaceId, projectRouteId: updated.id, actorUserId: principal.userId,
+              action, routeKey: updated.routeKey, sessionId: updated.conversation.sessionId,
+              targetJid: updated.conversation.contact.jid,
+            },
+          });
+        }
+        return updated;
       });
-      return this.projectView(project, target ? new Map([[sessionId, 'connected']]) : undefined);
+      let statuses: Map<string, string> | undefined;
+      try {
+        const snapshot = await this.loadSessionStatuses(await this.waConfig(principal, workspaceId));
+        if (snapshot.loaded) statuses = snapshot.statuses;
+      } catch {
+        statuses = undefined;
+      }
+      return this.projectView(project, statuses);
     } catch (error) {
       if ((error as { code?: string }).code === 'P2002') {
         throw new ConflictException('That WhatsApp chat is already assigned to another project.');
@@ -367,9 +504,26 @@ export class ProjectsService {
 
   async remove(principal: Principal, workspaceId: string, projectId: string) {
     await this.assertHumanMember(principal, workspaceId);
-    const existing = await this.prisma.projectRoute.findFirst({ where: { id: projectId, workspaceId } });
+    const existing = await this.prisma.projectRoute.findFirst({
+      where: { id: projectId, workspaceId },
+      include: { conversation: { include: { contact: true } } },
+    });
     if (!existing) throw new NotFoundException('Project not found');
-    await this.prisma.projectRoute.delete({ where: { id: existing.id } });
+    await this.prisma.$transaction(async (tx) => {
+      const member = await tx.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
+        select: { id: true },
+      });
+      if (!member) throw new ForbiddenException('Not a member of this workspace');
+      await tx.projectRouteAudit.create({
+        data: {
+          workspaceId, projectRouteId: existing.id, actorUserId: principal.userId,
+          action: 'route.deleted', routeKey: existing.routeKey,
+          sessionId: existing.conversation.sessionId, targetJid: existing.conversation.contact.jid,
+        },
+      });
+      await tx.projectRoute.delete({ where: { id: existing.id } });
+    });
     return { success: true };
   }
 }

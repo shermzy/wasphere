@@ -292,16 +292,21 @@ export function InboxView({ initialConversations, initialProjects }: { initialCo
     if (!selected) return
     if (!projectId) {
       if (!selectedProject) return
+      if (!window.confirm(`Delete #${selectedProject.routeKey}? This removes the project route from ${selected.contact.jid}.`)) return
       const response = await fetch(`/api/projects/${selectedProject.id}`, { method: "DELETE" })
       if (!response.ok) { toast.error("Could not remove project."); return }
       setProjectRoutes((current) => current.filter((project) => project.id !== selectedProject.id))
       toast.success("Project removed from chat")
       return
     }
+    const route = projectRoutes.find((project) => project.id === projectId)
+    if (!route) return
+    if (route.id === selectedProject?.id && route.sessionId === selected.sessionId && route.target.jid === selected.contact.jid) return
+    if (!window.confirm(`Bind #${route.routeKey} to the exact chat ${selected.contact.jid} in session ${selected.sessionId}?`)) return
     const response = await fetch(`/api/projects/${projectId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: selected.sessionId, targetJid: selected.contact.jid }),
+      body: JSON.stringify({ sessionId: selected.sessionId, targetJid: selected.contact.jid, confirmed: true }),
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
