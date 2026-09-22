@@ -152,6 +152,31 @@ test('API-key authentication rejects a different workspace before controller exe
   );
 });
 
+test('invalid API-key authentication advertises the Bearer challenge', async () => {
+  const guard = new CombinedAuthGuard({
+    validateApiKey: async () => null,
+  });
+  const request = {
+    headers: { authorization: 'Bearer wsk_invalid_test' },
+    params: {},
+  };
+  const responseHeaders = {};
+  const context = {
+    switchToHttp: () => ({
+      getRequest: () => request,
+      getResponse: () => ({
+        setHeader: (name, value) => { responseHeaders[name] = value; },
+      }),
+    }),
+  };
+
+  await assert.rejects(
+    () => guard.canActivate(context),
+    /Invalid or expired API key/,
+  );
+  assert.equal(responseHeaders['WWW-Authenticate'], 'Bearer realm="wasphere"');
+});
+
 test('does not send when the API key lacks messages:send', async () => {
   let sendCalls = 0;
   const inbox = {
