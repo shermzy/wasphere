@@ -284,7 +284,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
       throw new BadRequestException('"from" must be earlier than or equal to "to"');
     }
 
-    const where: Prisma.AuditLogWhereInput = {};
+    const where: Prisma.AuditLogWhereInput = { workspaceId };
     if (query.from || query.to) {
       where.timestamp = {
         ...(query.from ? { gte: new Date(query.from) } : {}),
@@ -337,6 +337,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
       // Messages last 24h, 2xx
       this.prisma.auditLog.count({
         where: {
+          workspaceId,
           endpoint: { contains: '/messages/' },
           method: 'POST',
           statusCode: { gte: 200, lt: 300 },
@@ -346,6 +347,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
       // Messages 24-48h ago, 2xx (for trend)
       this.prisma.auditLog.count({
         where: {
+          workspaceId,
           endpoint: { contains: '/messages/' },
           method: 'POST',
           statusCode: { gte: 200, lt: 300 },
@@ -355,6 +357,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
       // Failed message sends last 24h
       this.prisma.auditLog.count({
         where: {
+          workspaceId,
           endpoint: { contains: '/messages/' },
           method: 'POST',
           statusCode: { gte: 400 },
@@ -364,6 +367,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
       // Successful message logs last 7 days (for day buckets + type breakdown)
       this.prisma.auditLog.findMany({
         where: {
+          workspaceId,
           endpoint: { contains: '/messages/' },
           method: 'POST',
           statusCode: { gte: 200, lt: 300 },
@@ -373,6 +377,7 @@ export class WorkspacesService implements OnApplicationBootstrap {
       }),
       // Recent 8 audit entries (all methods) for activity feed
       this.prisma.auditLog.findMany({
+        where: { workspaceId },
         orderBy: { timestamp: 'desc' },
         take: 8,
         select: { id: true, method: true, endpoint: true, statusCode: true, timestamp: true, sessionId: true },

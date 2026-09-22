@@ -8,6 +8,36 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Built-in Pro routes and operator safety
+
+#### Added
+- **Campaigns** — durable, database-backed campaigns with per-recipient claims,
+  at-most-once delivery, and fail-closed indeterminate outcomes when provider
+  delivery is unknown.
+- **Automations** — disabled-by-default, exact-session keyword rules with
+  explicit operator confirmation before enable/disable and auditable runs.
+- **CRM and Inbox** — workspace-owned contact stages using reserved `crm:Lead`,
+  `crm:Qualified`, `crm:Customer`, and `crm:Inactive` tags.
+- **AI Replies** — runtime-configured, draft-only suggestions from a
+  workspace-owned conversation. Operators review, edit, and send from Inbox;
+  there is no automatic AI send.
+- **WHMCS generator** — opt-in hook generation bound to an exact workspace and
+  session, with `WASPHERE_API_KEY` read at WHMCS runtime rather than embedded
+  in generated PHP.
+
+#### Security and operations
+- Pro routes enforce exact workspace, provider-session, and provider-ID
+  ownership, scoped API-key permissions, operator confirmations, and audit
+  records. Meta credential files use AES-256-GCM with the separate
+  `META_CREDENTIALS_ENCRYPTION_KEY`.
+- Documented runtime configuration for `AI_REPLY_BASE_URL`,
+  `AI_REPLY_API_KEY`, `AI_REPLY_MODEL`, and the Meta encryption key without
+  embedding real secrets. The code does not activate a paid AI provider.
+
+#### Verification note
+- This entry describes the implemented source in this checkout. No live
+  deployment is claimed or verified by this documentation batch.
+
 ### v1.3 polish — email, bulk import & docs
 
 #### Added

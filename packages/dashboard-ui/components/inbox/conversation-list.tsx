@@ -27,6 +27,11 @@ export function ConversationList({
   statusTab,
   onStatusTab,
   loading,
+  loadingMore,
+  hasMore,
+  error,
+  onLoadMore,
+  onRetry,
   sessions = [],
   sessionFilter = "",
   onSessionFilter,
@@ -39,6 +44,11 @@ export function ConversationList({
   statusTab: ConversationStatus
   onStatusTab: (s: ConversationStatus) => void
   loading: boolean
+  loadingMore?: boolean
+  hasMore?: boolean
+  error?: string | null
+  onLoadMore?: () => void
+  onRetry?: () => void
   sessions?: string[]
   sessionFilter?: string
   onSessionFilter?: (s: string) => void
@@ -149,6 +159,24 @@ export function ConversationList({
               )
             })}
           </ul>
+        )}
+        {error && (
+          <div role="alert" className="m-3 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+            <p>{error}</p>
+            {onRetry && <button type="button" onClick={onRetry} className="mt-1 font-medium underline underline-offset-2">Try again</button>}
+          </div>
+        )}
+        {hasMore && onLoadMore && (
+          <div className="border-t p-3">
+            <button
+              type="button"
+              onClick={onLoadMore}
+              disabled={loadingMore}
+              className="w-full rounded-md border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loadingMore ? "Loading…" : "Load more conversations"}
+            </button>
+          </div>
         )}
       </div>
     </div>

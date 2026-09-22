@@ -21,6 +21,7 @@ import {
 import { StatusDot } from "@/components/ui/status-dot"
 import { TemplateBuilder } from "./template-builder"
 import type { OutboundReply } from "./types"
+import type { ProviderCapabilities, ProviderCapabilitiesState } from "@/lib/use-provider-capabilities"
 
 // ~7 MB raw keeps the base64 data URI under the WA server's 10 MB cap.
 const MAX_FILE_BYTES = 7 * 1024 * 1024
@@ -50,34 +51,29 @@ function fileToDataUri(file: File): Promise<string> {
   })
 }
 
-/** Provider capability flags (from GET /api/sessions/:id/capabilities). */
-export type ComposerCapabilities = {
-  polls?: boolean
-  interactiveButtons?: boolean
-  mediaUpload?: boolean
-  templates?: boolean
-} | null
-
 export function Composer({
   onSend,
   sending,
   sessionOffline,
   capabilities,
+  capabilityState = "loading",
+  capabilityError,
   sessionId,
 }: {
   onSend: (reply: OutboundReply) => Promise<boolean>
   sending: boolean
   sessionOffline: boolean
-  capabilities?: ComposerCapabilities
+  capabilities?: ProviderCapabilities | null
+  capabilityState?: ProviderCapabilitiesState
+  capabilityError?: string | null
   sessionId?: string | null
 }) {
-  // Unknown capabilities (null) → assume Baileys-style (everything on). Meta
-  // turns the relevant flags off, so those entries hide automatically.
+  const capabilitiesReady = capabilityState === "ready" && !!capabilities
   const can = {
-    media: capabilities?.mediaUpload ?? true,
-    poll: capabilities?.polls ?? true,
-    interactive: capabilities?.interactiveButtons ?? true,
-    template: capabilities?.templates ?? false, // Meta only
+    media: capabilitiesReady && capabilities?.mediaUpload === true,
+    poll: capabilitiesReady && capabilities?.polls === true,
+    interactive: capabilitiesReady && capabilities?.interactiveButtons === true,
+    template: capabilitiesReady && capabilities?.templates === true,
   }
   const [text, setText] = React.useState("")
   const [attachment, setAttachment] = React.useState<Attachment | null>(null)
@@ -176,7 +172,7 @@ export function Composer({
     setManageOpen(false)
   }
 
-  const busy = sending || sessionOffline
+  const busy = sending || sessionOffline || !capabilitiesReady
 
   const pickFile = async (file: File | undefined, kind: "image" | "document") => {
     if (!file) return
@@ -295,9 +291,20 @@ export function Composer({
   return (
     <div className="border-t p-3">
       {sessionOffline && (
-        <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div role="status" aria-live="polite" className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
           <StatusDot status="disconnected" />
           Session disconnected — reconnect to send.
+        </div>
+      )}
+      {!capabilitiesReady && (
+        <div
+          role={capabilityState === "error" ? "alert" : "status"}
+          aria-live={capabilityState === "error" ? "assertive" : "polite"}
+          className="mb-2 rounded-md border border-amber-400/40 bg-amber-50/60 px-2.5 py-2 text-xs text-amber-800 dark:bg-amber-900/10 dark:text-amber-300"
+        >
+          {capabilityState === "error"
+            ? `${capabilityError ?? "Provider capabilities are unavailable."} Sending is disabled until they are loaded.`
+            : "Loading provider capabilities… Sending controls are disabled until they are available."}
         </div>
       )}
 
@@ -310,7 +317,7 @@ export function Composer({
             <FileText className="size-5 shrink-0 opacity-70" />
           )}
           <span className="flex-1 truncate text-xs">{attachment.fileName}</span>
-          <Button variant="ghost" size="icon" className="size-6" onClick={() => setAttachment(null)} title="Remove">
+          <Button variant="ghost" size="icon" className="size-6" onClick={() => setAttachment(null)} title="Remove attachment" aria-label="Remove attachment">
             <X className="size-3.5" />
           </Button>
         </div>
@@ -327,7 +334,7 @@ export function Composer({
 
       <div className="flex items-end gap-2">
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-9 shrink-0" disabled={busy} />}>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-9 shrink-0" disabled={busy} aria-label="Add attachment" />}>
             <Paperclip className="size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -371,7 +378,7 @@ export function Composer({
         </DropdownMenu>
 
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-9 shrink-0" disabled={busy} />}>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-9 shrink-0" disabled={busy} aria-label="Open quick replies" />}>
             <MessageSquareText className="size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72">
@@ -411,6 +418,7 @@ export function Composer({
           size="icon"
           className="size-9 shrink-0"
           disabled={busy || (!attachment && !text.trim())}
+          aria-label="Send message"
         >
           <SendHorizonal className="size-4" />
         </Button>
@@ -435,7 +443,7 @@ export function Composer({
                     onChange={(e) => setPollOptions((p) => p.map((o, j) => (j === i ? e.target.value : o)))}
                   />
                   {pollOptions.length > 2 && (
-                    <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setPollOptions((p) => p.filter((_, j) => j !== i))} title="Remove option">
+                    <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setPollOptions((p) => p.filter((_, j) => j !== i))} title="Remove poll option" aria-label={`Remove poll option ${i + 1}`}>
                       <Trash2 className="size-4" />
                     </Button>
                   )}
@@ -529,7 +537,7 @@ export function Composer({
                 <div key={i} className="flex items-center gap-2">
                   <Input value={b} maxLength={20} placeholder={`Button ${i + 1}`} onChange={(e) => setBtns((p) => p.map((x, j) => (j === i ? e.target.value : x)))} />
                   {btns.length > 1 && (
-                    <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setBtns((p) => p.filter((_, j) => j !== i))} title="Remove"><Trash2 className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setBtns((p) => p.filter((_, j) => j !== i))} title="Remove button" aria-label={`Remove button ${i + 1}`}><Trash2 className="size-4" /></Button>
                   )}
                 </div>
               ))}
@@ -570,7 +578,7 @@ export function Composer({
                   <Input value={r.title} maxLength={24} placeholder={`Item ${i + 1} title`} onChange={(e) => setListRows((p) => p.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
                   <Input value={r.description} maxLength={72} placeholder="Description (optional)" onChange={(e) => setListRows((p) => p.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))} />
                   {listRows.length > 1 && (
-                    <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setListRows((p) => p.filter((_, j) => j !== i))} title="Remove"><Trash2 className="size-4" /></Button>
+                    <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setListRows((p) => p.filter((_, j) => j !== i))} title="Remove list item" aria-label={`Remove list item ${i + 1}`}><Trash2 className="size-4" /></Button>
                   )}
                 </div>
               ))}
@@ -591,7 +599,7 @@ export function Composer({
           <DialogHeader><DialogTitle>Send template</DialogTitle></DialogHeader>
           <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
             {tplLoading ? (
-              <p className="text-sm text-muted-foreground">Loading templates…</p>
+              <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Loading templates…</p>
             ) : !tplSel ? (
               <>
                 <button
@@ -665,7 +673,7 @@ export function Composer({
                   onChange={(e) => setDraftReplies((p) => p.map((x, j) => (j === i ? e.target.value : x)))}
                   className="text-xs"
                 />
-                <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setDraftReplies((p) => p.filter((_, j) => j !== i))} title="Delete">
+                <Button variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => setDraftReplies((p) => p.filter((_, j) => j !== i))} title="Delete quick reply" aria-label={`Delete quick reply ${i + 1}`}>
                   <Trash2 className="size-4" />
                 </Button>
               </div>

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { toast } from "sonner"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Eye, EyeOff, Copy, ExternalLink } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -105,10 +105,11 @@ function ApiReferenceTab({ waServerUrl }: ApiReferenceTabProps) {
           <div className="flex items-center gap-2">
             <Input value={waServerUrl} readOnly className="font-mono text-sm placeholder:text-zinc-400 placeholder:font-light" />
             <a
-              href={`${waServerUrl}/api/docs`}
+              href={`${waServerUrl}/api/reference`}
               target="_blank"
               rel="noopener noreferrer"
-              className={buttonVariants({ variant: "outline", size: "sm" })}
+              aria-label="Open WA Server API reference"
+              className={`${buttonVariants({ variant: "outline", size: "sm" })} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
             >
               <ExternalLink className="size-3.5" />
               View API Docs
@@ -121,7 +122,7 @@ function ApiReferenceTab({ waServerUrl }: ApiReferenceTabProps) {
 
       {/* API Token */}
       <div className="flex flex-col gap-1.5">
-        <Label className="text-sm font-medium text-foreground">API Token</Label>
+        <Label className="text-sm font-medium text-foreground">WA Server API Token</Label>
         {loading ? (
           <div className="h-9 w-full animate-shimmer-mint rounded-md" />
         ) : fetchError ? (
@@ -143,7 +144,7 @@ function ApiReferenceTab({ waServerUrl }: ApiReferenceTabProps) {
               value={revealed ? token : "••••••••••••"}
               readOnly
               className="font-mono text-sm placeholder:text-zinc-400 placeholder:font-light"
-              aria-label="API token"
+              aria-label="WA Server API token"
             />
             <Button
               variant="outline"
@@ -408,19 +409,26 @@ interface DeveloperPanelProps {
 }
 
 export function DeveloperPanel({ waServerUrl }: DeveloperPanelProps) {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const tabParam = searchParams.get("tab")
   const validTabs = ["api-keys", "api-reference", "audit-log"] as const
   type Tab = typeof validTabs[number]
-  const initialTab: Tab = (validTabs as readonly string[]).includes(tabParam ?? "") ? (tabParam as Tab) : "api-keys"
-  const [activeTab, setActiveTab] = React.useState<Tab>(initialTab)
+  const activeTab: Tab = (validTabs as readonly string[]).includes(tabParam ?? "")
+    ? (tabParam as Tab)
+    : "api-keys"
+
+  const handleTabChange = (value: string) => {
+    if (!(validTabs as readonly string[]).includes(value)) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("tab", value)
+    router.replace(`/dashboard/developer?${params.toString()}`, { scroll: false })
+  }
 
   return (
     <Tabs
       value={activeTab}
-      onValueChange={(val) =>
-        setActiveTab(val as "api-keys" | "api-reference" | "audit-log")
-      }
+      onValueChange={handleTabChange}
     >
       <TabsList>
         <TabsTrigger value="api-keys">API Keys</TabsTrigger>

@@ -103,6 +103,7 @@ export class ApiKeysService {
 
     await this.prisma.auditLog.create({
       data: {
+        workspaceId,
         method: 'POST',
         endpoint: 'api_key.created',
         actorTokenPrefix: prefix,
@@ -160,7 +161,7 @@ export class ApiKeysService {
 
     if (dto.isActive === false) {
       await this.prisma.auditLog.create({
-        data: { method: 'PATCH', endpoint: 'api_key.deactivated', actorTokenPrefix: existing.keyPrefix },
+        data: { workspaceId, method: 'PATCH', endpoint: 'api_key.deactivated', actorTokenPrefix: existing.keyPrefix },
       });
     }
 
@@ -185,7 +186,7 @@ export class ApiKeysService {
     });
 
     await this.prisma.auditLog.create({
-      data: { method: 'POST', endpoint: 'api_key.rotated', actorTokenPrefix: prefix },
+      data: { workspaceId, method: 'POST', endpoint: 'api_key.rotated', actorTokenPrefix: prefix },
     });
 
     return {
@@ -211,7 +212,7 @@ export class ApiKeysService {
     await this.prisma.apiKey.delete({ where: { id: keyId } });
 
     await this.prisma.auditLog.create({
-      data: { method: 'DELETE', endpoint: 'api_key.deleted', actorTokenPrefix: existing.keyPrefix },
+      data: { workspaceId, method: 'DELETE', endpoint: 'api_key.deleted', actorTokenPrefix: existing.keyPrefix },
     });
 
     return { success: true };

@@ -13,11 +13,13 @@ datasource db {
 
 // ---------------------------------------------------------------------------
 // audit_logs — written by dashboard-api when wa-server POSTs audit events.
-// Phase 2 model. DO NOT MODIFY — the Phase 2 migration is already applied.
+// Legacy rows may have a null workspace_id and are intentionally excluded from
+// workspace-scoped reads because their ownership cannot be reconstructed safely.
 // ---------------------------------------------------------------------------
 model AuditLog {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   timestamp        DateTime @default(now()) @db.Timestamptz()
+  workspaceId      String?  @map("workspace_id") @db.Uuid
   sessionId        String?  @map("session_id")
   actorTokenPrefix String?  @map("actor_token_prefix")
   method           String
@@ -26,7 +28,10 @@ model AuditLog {
   requestHash      String?  @map("request_hash")
   ipAddress        String?  @map("ip_address")
 
+  workspace         Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   @@index([timestamp(sort: Desc)])
+  @@index([workspaceId, timestamp(sort: Desc)])
   @@index([sessionId, timestamp(sort: Desc)])
   @@map("audit_logs")
 }
@@ -47,6 +52,8 @@ model User {
   passwordResetTokens PasswordResetToken[]
   createdApiKeys      ApiKey[]
   createdProjectRoutes ProjectRoute[] @relation("ProjectRouteCreator")
+  createdCampaigns    Campaign[]      @relation("CampaignCreator")
+  createdAutomationRules AutomationRule[] @relation("AutomationRuleCreator")
 
   @@map("users")
 }
@@ -81,6 +88,11 @@ model Workspace {
   projectRoutes ProjectRoute[]
   projectRouteAudits ProjectRouteAudit[]
   sessions           WorkspaceSession[]
+  auditLogs          AuditLog[]
+  campaigns          Campaign[]
+  campaignRecipients CampaignRecipient[]
+  automationRules    AutomationRule[]
+  automationRuns     AutomationRun[]
 
   @@index([ownerId])
   @@map("workspaces")
@@ -424,4 +436,123 @@ model Message {
   @@unique([workspaceId, waMessageId])
   @@index([conversationId, waTimestamp(sort: Desc)])
   @@map("messages")
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+  INDETERMINATE
+}
+
+enum CampaignRecipientStatus {
+  PENDING
+  CLAIMED
+  SENT
+  FAILED
+  INDETERMINATE
+}
+
+model Campaign {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String         @map("workspace_id") @db.Uuid
+  name              String         @db.VarChar(120)
+  providerSessionId String         @map("provider_session_id")
+  message           String         @db.Text
+  createdBy         String         @map("created_by") @db.Uuid
+  status            CampaignStatus @default(DRAFT)
+  scheduledAt       DateTime?      @map("scheduled_at") @db.Timestamptz()
+  startedAt         DateTime?      @map("started_at") @db.Timestamptz()
+  finishedAt        DateTime?      @map("finished_at") @db.Timestamptz()
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   User             @relation("CampaignCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  recipients CampaignRecipient[]
+
+  @@index([workspaceId, status, scheduledAt])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("campaigns")
+}
+
+model CampaignRecipient {
+  id          String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String                  @map("workspace_id") @db.Uuid
+  campaignId  String                  @map("campaign_id") @db.Uuid
+  contactId   String?                 @map("contact_id") @db.Uuid
+  targetKey   String                  @map("target_key")
+  phone       String
+  jid         String
+  displayName String?                 @map("display_name")
+  status      CampaignRecipientStatus @default(PENDING)
+  claimedAt   DateTime?               @map("claimed_at") @db.Timestamptz()
+  completedAt DateTime?               @map("completed_at") @db.Timestamptz()
+  conversationId String?              @map("conversation_id") @db.Uuid
+  errorMessage String?                @map("error_message") @db.Text
+  createdAt   DateTime                @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime                @updatedAt @map("updated_at") @db.Timestamptz()
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign  Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, targetKey])
+  @@index([workspaceId, campaignId, status])
+  @@map("campaign_recipients")
+}
+
+model AutomationRule {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String   @map("workspace_id") @db.Uuid
+  providerSessionId String   @map("provider_session_id")
+  name              String
+  keyword           String
+  responseText      String   @map("response_text") @db.Text
+  enabled           Boolean  @default(false)
+  createdBy         String   @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   User             @relation("AutomationRuleCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  runs      AutomationRun[]
+
+  @@index([workspaceId, providerSessionId, enabled])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("automation_rules")
+}
+
+enum AutomationRunStatus {
+  CLAIMED
+  SENT
+  FAILED
+  INDETERMINATE
+  SKIPPED
+}
+
+model AutomationRun {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String             @map("workspace_id") @db.Uuid
+  automationRuleId  String             @map("automation_rule_id") @db.Uuid
+  providerSessionId String             @map("provider_session_id")
+  providerMessageId String             @map("provider_message_id")
+  status            AutomationRunStatus @default(CLAIMED)
+  errorMessage      String?            @map("error_message") @db.Text
+  history           Json               @default("[]")
+  claimedAt         DateTime           @default(now()) @map("claimed_at") @db.Timestamptz()
+  completedAt       DateTime?          @map("completed_at") @db.Timestamptz()
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz()
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  rule      AutomationRule @relation(fields: [automationRuleId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, automationRuleId, providerMessageId])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, automationRuleId, createdAt(sort: Desc)])
+  @@map("automation_runs")
 }

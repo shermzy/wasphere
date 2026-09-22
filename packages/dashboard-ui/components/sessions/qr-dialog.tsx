@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { SessionActionConfirmDialog } from "@/components/sessions/session-action-confirm-dialog"
 
 interface Session {
   id: string
@@ -33,6 +34,7 @@ export function QrDialog({
   const [countdown, setCountdown] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
   const [retrying, setRetrying] = React.useState(false)
+  const [confirmRetryOpen, setConfirmRetryOpen] = React.useState(false)
 
   const intervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null)
   // The 1.5s "Connected!" success timer — held so it can be cleared on unmount,
@@ -126,25 +128,20 @@ export function QrDialog({
     }
   }, [open, poll])
 
-  // QR expired sessions cannot be re-triggered without deletion — must DELETE + POST
+  // Restart keeps the session directory and credentials intact.
   const handleRetry = async () => {
+    setConfirmRetryOpen(false)
     setRetrying(true)
     setError(null)
     setSession(null)
 
     try {
-      // Step 1: delete the expired/failed session.
-      await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" })
-
-      // Step 2: recreate the session with the same ID.
-      const createRes = await fetch("/api/sessions", {
+      const restartRes = await fetch(`/api/sessions/${sessionId}/restart`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: sessionId }),
       })
 
-      if (!createRes.ok) {
-        const body = await createRes.json().catch(() => ({}))
+      if (!restartRes.ok) {
+        const body = await restartRes.json().catch(() => ({}))
         setError(body.message ?? "Failed to restart session.")
         return
       }
@@ -167,8 +164,13 @@ export function QrDialog({
     if (error) {
       return (
         <div className="flex flex-col items-center gap-4 py-4">
-          <p className="text-sm text-destructive">{error}</p>
-          <Button onClick={handleRetry} disabled={retrying} variant="outline">
+          <p className="text-sm text-destructive" role="alert" aria-live="assertive">{error}</p>
+          <Button
+            onClick={() => setConfirmRetryOpen(true)}
+            disabled={retrying}
+            variant="outline"
+            aria-label={`Retry session ${sessionId}`}
+          >
             {retrying ? "Retrying…" : "Retry"}
           </Button>
         </div>
@@ -224,12 +226,17 @@ export function QrDialog({
     if (session.status === "qr_expired" || session.status === "failed") {
       return (
         <div className="flex flex-col items-center gap-4 py-4">
-          <p className="text-sm text-destructive">
+          <p className="text-sm text-destructive" role="alert" aria-live="assertive">
             {session.status === "qr_expired"
               ? "QR code expired. Please retry."
               : "Session failed. Please retry."}
           </p>
-          <Button onClick={handleRetry} disabled={retrying} variant="outline">
+          <Button
+            onClick={() => setConfirmRetryOpen(true)}
+            disabled={retrying}
+            variant="outline"
+            aria-label={`Retry session ${sessionId}`}
+          >
             {retrying ? "Retrying…" : "Retry"}
           </Button>
         </div>
@@ -240,14 +247,24 @@ export function QrDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent showCloseButton>
-        <DialogHeader>
-          <DialogTitle>Connect WhatsApp</DialogTitle>
-        </DialogHeader>
-        <p className="text-xs text-muted-foreground">Session: {sessionId}</p>
-        {renderBody()}
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+        <DialogContent showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Connect WhatsApp</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">Session: {sessionId}</p>
+          {renderBody()}
+        </DialogContent>
+      </Dialog>
+      <SessionActionConfirmDialog
+        open={confirmRetryOpen}
+        sessionId={sessionId}
+        action="retry"
+        submitting={retrying}
+        onClose={() => { if (!retrying) setConfirmRetryOpen(false) }}
+        onConfirm={handleRetry}
+      />
+    </>
   )
 }

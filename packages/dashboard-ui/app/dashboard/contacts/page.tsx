@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { mergeUniqueById } from "@/lib/pagination"
+import { apiErrorMessage } from "@/lib/api-error"
 
 type Contact = {
   id: string
@@ -93,6 +95,10 @@ export default function ContactsPage() {
   const [activeTag, setActiveTag] = React.useState<string | null>(null)
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
   const loadedOnce = React.useRef(false)
+  const [nextCursor, setNextCursor] = React.useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = React.useState(false)
+  const [loadError, setLoadError] = React.useState<string | null>(null)
+  const loadRequestRef = React.useRef(0)
 
   // Edit dialog
   const [editing, setEditing] = React.useState<Contact | null>(null)
@@ -112,32 +118,57 @@ export default function ContactsPage() {
   const [importPreview, setImportPreview] = React.useState<{ fileName: string; rows: ImportRow[]; invalid: number } | null>(null)
   const [importing, setImporting] = React.useState(false)
 
-  const load = React.useCallback(async (q: string, tag: string | null) => {
-    if (!loadedOnce.current) setLoading(true)
+  const load = React.useCallback(async (q: string, tag: string | null, cursor: string | null = null) => {
+    const requestId = ++loadRequestRef.current
+    const append = !!cursor
+    if (!append && !loadedOnce.current) setLoading(true)
+    if (append) setLoadingMore(true)
     try {
       const qs = new URLSearchParams({ limit: "100" })
       if (q.trim()) qs.set("search", q.trim())
       if (tag) qs.set("tag", tag)
-      const [list, tags] = await Promise.all([
-        fetch(`/api/contacts?${qs}`).then((r) => r.json()).catch(() => ({})),
-        fetch(`/api/contacts/tags`).then((r) => r.json()).catch(() => []),
+      if (cursor) qs.set("cursor", cursor)
+      const [listResponse, tagsResponse] = await Promise.all([
+        fetch(`/api/contacts?${qs}`),
+        fetch(`/api/contacts/tags`),
       ])
-      setContacts(Array.isArray(list?.items) ? list.items : [])
-      setAllTags(Array.isArray(tags) ? tags : [])
-    } catch {
-      toast.error("Could not load contacts.")
+      const list: unknown = await listResponse.json().catch(() => null)
+      const tags: unknown = await tagsResponse.json().catch(() => null)
+      if (!listResponse.ok) throw new Error(apiErrorMessage(list, "Could not load contacts."))
+      if (requestId !== loadRequestRef.current) return
+      const page = list as { items?: Contact[]; nextCursor?: string | null } | null
+      const items = Array.isArray(page?.items) ? page.items : []
+      setContacts((current) => append ? mergeUniqueById(current, items) : items)
+      setNextCursor(page?.nextCursor ?? null)
+      setLoadError(null)
+      if (tagsResponse.ok) setAllTags(Array.isArray(tags) ? tags : [])
+    } catch (cause) {
+      if (requestId === loadRequestRef.current) {
+        const message = cause instanceof Error ? cause.message : "Could not load contacts."
+        setLoadError(message)
+        toast.error(`${message} Try again.`)
+      }
     } finally {
-      loadedOnce.current = true
-      setLoading(false)
+      if (requestId === loadRequestRef.current) {
+        loadedOnce.current = true
+        setLoading(false)
+        setLoadingMore(false)
+      }
     }
   }, [])
 
   React.useEffect(() => {
+    loadRequestRef.current += 1
+    setNextCursor(null)
+    setLoadError(null)
     const t = setTimeout(() => void load(search, activeTag), search ? 250 : 0)
     return () => clearTimeout(t)
   }, [load, search, activeTag])
 
   const refresh = () => void load(search, activeTag)
+  const loadMore = () => {
+    if (nextCursor && !loadingMore) void load(search, activeTag, nextCursor)
+  }
 
   // ── Edit ───────────────────────────────────────────────────────────────
   const openEdit = (c: Contact) => { setEditing(c); setDraft({ savedName: c.savedName ?? "", tags: c.tags ?? [], notes: c.notes ?? "" }) }
@@ -322,6 +353,13 @@ export default function ContactsPage() {
         </div>
       )}
 
+      {loadError && (
+        <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <span>{loadError}</span>{" "}
+          <button type="button" onClick={refresh} className="font-medium underline underline-offset-2">Try again</button>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : contacts.length === 0 ? (
@@ -360,6 +398,13 @@ export default function ContactsPage() {
               </div>
             ))}
           </div>
+          {nextCursor && (
+            <div className="border-t p-3">
+              <Button variant="outline" size="sm" className="w-full" onClick={loadMore} disabled={loadingMore}>
+                {loadingMore ? "Loading…" : "Load more contacts"}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

@@ -179,4 +179,20 @@ export class SessionsController {
   logout(@Param('id', ValidateSessionIdPipe) id: string) {
     return this.sessionsService.logoutSession(id);
   }
+
+  // POST /api/sessions/:id/restart — restart without deleting stored state
+  @Post(':id/restart')
+  @ApiOperation({
+    summary: 'Restart a session for relinking',
+    description: 'Restarts the local WhatsApp socket while preserving the session directory, credentials, and configuration. A failed restart leaves the session registered and retryable.',
+  })
+  @ApiParam({ name: 'id', description: 'Session identifier', example: 'my-session' })
+  @ApiResponse({ status: 200, description: 'Session restart started.' })
+  @ApiResponse({ status: 400, description: 'Restart is not supported for this provider.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid X-Api-Token.' })
+  @ApiResponse({ status: 404, description: 'Session not found.' })
+  @ApiResponse({ status: 500, description: 'Session restart failed; stored state was preserved.' })
+  restart(@Param('id', ValidateSessionIdPipe) id: string) {
+    return this.sessionsService.restartSession(id);
+  }
 }

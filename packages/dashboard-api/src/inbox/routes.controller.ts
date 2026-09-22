@@ -4,6 +4,7 @@ import { Request } from 'express';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { ApiKeyPermissionGuard } from '../auth/api-key-permission.guard';
 import { CapabilityGuard } from '../auth/capability.guard';
+import { RequireCapability } from '../auth/require-capability.decorator';
 import { RequiresPermission } from '../auth/requires-permission.decorator';
 import { InboxService } from './inbox.service';
 import { SendReplyDto } from './dto/send-reply.dto';
@@ -16,6 +17,7 @@ interface RouteRequest extends Request {
 @ApiBearerAuth()
 @Controller('workspaces/:workspaceId/routes')
 @UseGuards(CombinedAuthGuard, ApiKeyPermissionGuard, CapabilityGuard)
+@RequireCapability('inbox')
 export class RoutesController {
   constructor(private readonly inbox: InboxService) {}
 

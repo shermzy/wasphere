@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "test": "node --experimental-strip-types --test lib/*.test.ts components/crm/*.test.ts components/whmcs/*.test.ts",
     "start": "next start"
   },
   "dependencies": {

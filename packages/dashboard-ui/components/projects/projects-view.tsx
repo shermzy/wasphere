@@ -316,7 +316,7 @@ export function ProjectsView({ initialProjects }: { initialProjects: ProjectRout
       </CardHeader>
       <CardContent>
         {targetsLoading ? (
-          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Loading chats…</div>
+          <div role="status" aria-live="polite" className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" aria-hidden="true" /> Loading chats…</div>
         ) : rows.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">{search ? "No chats match this search." : classifiedBucket ? "No chats are bound to a project route." : "All discovered chats are currently classified."}</p>
         ) : (
@@ -372,12 +372,12 @@ export function ProjectsView({ initialProjects }: { initialProjects: ProjectRout
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input aria-label="Search classified and unclassified chats" className="pl-9" value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="Search chats, sessions, route names, or exact JIDs…" />
             </div>
-            <Button variant="outline" onClick={() => void refreshTargets()} disabled={targetsLoading}><RefreshCw className={targetsLoading ? "animate-spin" : ""} /> Refresh</Button>
+            <Button variant="outline" onClick={() => void refreshTargets()} disabled={targetsLoading} aria-busy={targetsLoading}><RefreshCw className={targetsLoading ? "animate-spin" : ""} aria-hidden="true" /> Refresh</Button>
           </div>
           {syncSessionIds.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3">
               <span className="mr-1 text-sm font-medium">Sync chats:</span>
-              {syncSessionIds.map((id) => <Button key={id} variant="secondary" size="sm" onClick={() => void syncChats(id)} disabled={syncingSessionId !== null}><RefreshCw className={syncingSessionId === id ? "animate-spin" : ""} /> {id}</Button>)}
+              {syncSessionIds.map((id) => <Button key={id} variant="secondary" size="sm" onClick={() => void syncChats(id)} disabled={syncingSessionId !== null} aria-busy={syncingSessionId === id}><RefreshCw className={syncingSessionId === id ? "animate-spin" : ""} aria-hidden="true" /> {id}</Button>)}
             </div>
           )}
           {targetsError && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{targetsError}</p>}
@@ -413,10 +413,10 @@ export function ProjectsView({ initialProjects }: { initialProjects: ProjectRout
                     </CardDescription>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Switch aria-label={`${isEnabled ? "Disable" : "Enable"} ${project.name}`} checked={isEnabled} onCheckedChange={() => void toggleEnabled(project)} disabled={pendingProjectId === project.id} />
-                    <Button variant="ghost" size="icon-sm" onClick={() => void copyRoute(project)} title="Copy route key"><Clipboard /></Button>
+                    <Switch aria-label={`${isEnabled ? "Disable" : "Enable"} ${project.name}`} aria-busy={pendingProjectId === project.id} checked={isEnabled} onCheckedChange={() => void toggleEnabled(project)} disabled={pendingProjectId === project.id} />
+                    <Button variant="ghost" size="icon-sm" onClick={() => void copyRoute(project)} title="Copy route key" aria-label={`Copy route key #${project.routeKey}`}><Clipboard aria-hidden="true" /></Button>
                     <Button variant="outline" size="sm" onClick={() => beginEdit(project)}>Edit</Button>
-                    <Button variant="ghost" size="icon-sm" onClick={() => void remove(project)} title="Delete project"><Trash2 /></Button>
+                    <Button variant="ghost" size="icon-sm" onClick={() => void remove(project)} title="Delete project" aria-label={`Delete project ${project.name}`}><Trash2 aria-hidden="true" /></Button>
                   </div>
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -439,7 +439,7 @@ export function ProjectsView({ initialProjects }: { initialProjects: ProjectRout
           <CardDescription>Recent route bindings, retargets, renames, and enablement changes for this workspace.</CardDescription>
         </CardHeader>
         <CardContent>
-          {auditLoading ? <p className="text-sm text-muted-foreground">Loading audit history…</p> : auditError ? <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{auditError}</p> : auditEvents.length === 0 ? <p className="text-sm text-muted-foreground">No project audit events yet.</p> : (
+          {auditLoading ? <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Loading audit history…</p> : auditError ? <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{auditError}</p> : auditEvents.length === 0 ? <p className="text-sm text-muted-foreground">No project audit events yet.</p> : (
             <div className="divide-y rounded-lg border">
               {auditEvents.map((event) => (
                 <div key={event.id} className="grid gap-1 p-3 text-sm sm:grid-cols-[auto_1fr_auto] sm:items-start sm:gap-x-4">
@@ -461,27 +461,27 @@ export function ProjectsView({ initialProjects }: { initialProjects: ProjectRout
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="project-name">Display name</Label>
-              <Input id="project-name" value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder="Project A" />
-              <p className="text-xs text-muted-foreground">Renaming does not change the canonical route key.</p>
+              <Input id="project-name" name="project-name" value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder="Project A" aria-invalid={!!error} aria-describedby={error ? "project-name-help project-form-error" : "project-name-help"} />
+              <p id="project-name-help" className="text-xs text-muted-foreground">Renaming does not change the canonical route key.</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="project-route-key">Canonical route key</Label>
-              <Input id="project-route-key" value={routeKey} maxLength={40} disabled={!!editing} onChange={(event) => setRouteKey(event.target.value)} placeholder="project-a" />
-              <p className="text-xs text-muted-foreground">Use lowercase letters, numbers, and hyphens without leading or trailing hyphens. This key stays stable after creation.</p>
+              <Input id="project-route-key" name="route-key" value={routeKey} maxLength={40} disabled={!!editing} onChange={(event) => setRouteKey(event.target.value)} placeholder="project-a" aria-invalid={!!error} aria-describedby={error ? "project-route-key-help project-form-error" : "project-route-key-help"} />
+              <p id="project-route-key-help" className="text-xs text-muted-foreground">Use lowercase letters, numbers, and hyphens without leading or trailing hyphens. This key stays stable after creation.</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="project-session">WhatsApp session</Label>
-              <select id="project-session" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setSelectedJid("") }} className="h-9 rounded-lg border border-input bg-background px-3 text-sm">
+              <select id="project-session" name="session-id" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setSelectedJid("") }} className="h-9 rounded-lg border border-input bg-background px-3 text-sm" aria-invalid={!!error} aria-describedby={error ? "project-form-error" : undefined}>
                 <option value="">Select a session</option>
                 {sessionOptions.map((session) => <option key={session.id} value={session.id}>{session.id}{session.status ? ` (${session.status})` : ""}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="project-target-search">Target chat</Label>
-              <Input id="project-target-search" value={targetSearch} onChange={(event) => setTargetSearch(event.target.value)} placeholder="Search groups, names, phone numbers, or JIDs…" />
+              <Input id="project-target-search" name="target-search" value={targetSearch} onChange={(event) => setTargetSearch(event.target.value)} placeholder="Search groups, names, phone numbers, or JIDs…" aria-invalid={!!error} aria-describedby={error ? "project-form-error" : undefined} />
               <div className="max-h-64 overflow-y-auto rounded-lg border">
                 {targetsLoading ? (
-                  <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Loading WhatsApp chats…</div>
+                  <div role="status" aria-live="polite" className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" aria-hidden="true" /> Loading WhatsApp chats…</div>
                 ) : !sessionId ? (
                   <p className="p-4 text-sm text-muted-foreground">Select a session to choose an exact chat.</p>
                 ) : dialogTargets.length === 0 ? (
@@ -490,8 +490,8 @@ export function ProjectsView({ initialProjects }: { initialProjects: ProjectRout
                   const assignedElsewhere = !!target.assignedProject && target.assignedProject.id !== editing?.id
                   const selected = selectedJid === target.jid
                   return (
-                    <button key={`${target.sessionId}:${target.jid}`} type="button" disabled={assignedElsewhere || target.availability !== "connected"} onClick={() => setSelectedJid(target.jid)} className="flex w-full items-center gap-3 border-b p-3 text-left last:border-b-0 hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50" aria-pressed={selected}>
-                      <span className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${selected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"}`}>{selected && <Check className="size-3" />}</span>
+                    <button key={`${target.sessionId}:${target.jid}`} type="button" disabled={assignedElsewhere || target.availability !== "connected"} onClick={() => setSelectedJid(target.jid)} className="flex w-full items-center gap-3 border-b p-3 text-left last:border-b-0 hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset" aria-pressed={selected}>
+                      <span className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${selected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"}`}>{selected && <Check className="size-3" aria-hidden="true" />}</span>
                       <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{target.name}</span><span className="block truncate text-xs text-muted-foreground">{target.type} · {target.jid}</span></span>
                       {assignedElsewhere && <span className="text-[10px] text-destructive">Assigned</span>}
                     </button>
@@ -499,11 +499,11 @@ export function ProjectsView({ initialProjects }: { initialProjects: ProjectRout
                 })}
               </div>
             </div>
-            {error && <p role="alert" className="whitespace-pre-line rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+            {error && <p id="project-form-error" role="alert" className="whitespace-pre-line rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => void save()} disabled={saving || !sessionId}>{saving ? "Saving…" : editing ? "Save changes" : "Create project"}</Button>
+            <Button onClick={() => void save()} disabled={saving || !sessionId} aria-busy={saving}>{saving ? "Saving…" : editing ? "Save changes" : "Create project"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

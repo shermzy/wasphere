@@ -13,8 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, HelpCircle, Moon, Sun, Monitor } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Moon, Sun, Monitor } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { logout } from "@/lib/api";
 import { useTheme } from "next-themes";
@@ -23,18 +22,28 @@ import { usePathname } from "next/navigation";
 const ROUTE_LABELS: Record<string, string> = {
   "/dashboard/overview": "Overview",
   "/dashboard/sessions": "Sessions",
+  "/dashboard/inbox": "Inbox",
+  "/dashboard/projects": "Projects",
+  "/dashboard/contacts": "Contacts",
   "/dashboard/messages": "Messages",
   "/dashboard/webhooks": "Webhooks",
+  "/dashboard/team": "Team",
   "/dashboard/developer": "Developer",
   "/dashboard/settings": "Settings",
-}
+  "/dashboard/campaigns": "Campaigns",
+  "/dashboard/automations": "Automations",
+  "/dashboard/crm": "CRM",
+  "/dashboard/ai-replies": "AI Replies",
+  "/dashboard/whmcs": "WHMCS",
+};
 
 export function AppHeader() {
   const { user } = useAuth();
   const { setTheme } = useTheme();
   const pathname = usePathname();
 
-  const routeLabel = ROUTE_LABELS[pathname] ?? null;
+  const routeLabel = ROUTE_LABELS[pathname] ?? Object.entries(ROUTE_LABELS)
+    .find(([route]) => pathname.startsWith(`${route}/`))?.[1] ?? null;
   const displayName = user?.name ?? user?.email ?? "…";
   const displayEmail = user?.email ?? "";
   const avatarInitial = (user?.name?.[0] ?? user?.email?.[0] ?? "?").toUpperCase();
@@ -57,25 +66,11 @@ export function AppHeader() {
         </Badge>
       </div>
 
-      {/* Right — search + help + avatar */}
+      {/* Right — avatar */}
       <div className="flex items-center gap-1">
-        {/* Search */}
-        <button className="flex items-center gap-2 rounded-md border border-input bg-background px-2.5 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors h-7 min-w-[140px]">
-          <Search size={13} />
-          <span className="text-xs flex-1 text-left">Search…</span>
-          <kbd className="hidden sm:inline-flex h-4 select-none items-center gap-0.5 rounded border border-border bg-muted px-1 font-mono text-[10px] font-medium text-muted-foreground">
-            ⌘K
-          </kbd>
-        </button>
-
-        {/* Help */}
-        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full">
-          <HelpCircle size={15} className="text-muted-foreground" />
-        </Button>
-
         {/* User avatar */}
         <DropdownMenu>
-          <DropdownMenuTrigger>
+          <DropdownMenuTrigger aria-label={`Open account menu for ${displayName}`}>
             <Avatar className="h-7 w-7 cursor-pointer ring-2 ring-transparent hover:ring-primary/30 transition-all">
               <AvatarFallback className="text-xs bg-primary/10 text-primary font-semibold">
                 {avatarInitial}

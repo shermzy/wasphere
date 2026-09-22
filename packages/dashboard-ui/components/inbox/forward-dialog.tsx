@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { toast } from "sonner"
+import { apiErrorMessage } from "@/lib/api-error"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
@@ -63,7 +64,8 @@ export function ForwardDialog({
         toast.success(`Forwarded to ${target.contact.name}`)
         onClose()
       } else {
-        toast.error(res.status === 503 ? "That session is offline." : "Couldn't forward.")
+        const data: unknown = await res.json().catch(() => null)
+        toast.error(`${apiErrorMessage(data, res.status === 503 ? "That session is offline." : "Couldn't forward.")} Try again.`)
       }
     } catch {
       toast.error("Couldn't forward.")
@@ -99,7 +101,7 @@ export function ForwardDialog({
                     <div className="truncate text-sm font-medium text-foreground">{c.contact.name}</div>
                     <div className="truncate text-xs text-muted-foreground">{c.contact.isGroup ? c.contact.phone : `+${c.contact.phone}`}</div>
                   </div>
-                  {sending === c.id && <span className="text-xs text-muted-foreground">Sending…</span>}
+                  {sending === c.id && <span role="status" aria-live="polite" className="text-xs text-muted-foreground">Sending…</span>}
                 </button>
               ))}
               {list.length === 0 && (

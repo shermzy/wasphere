@@ -15,6 +15,7 @@ import { ListConversationsQueryDto } from './dto/list-conversations-query.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
 import { PatchConversationDto } from './dto/patch-conversation.dto';
 import { SendReplyDto } from './dto/send-reply.dto';
+import { StartConversationDto } from './dto/start-conversation.dto';
 import { normalizeProjectRouteKey } from '../projects/project-route-key';
 
 // List/preview labels for outbound non-text replies (no body text to show).
@@ -54,9 +55,9 @@ export class InboxService {
     return convo;
   }
 
-  private async writeAudit(sessionId: string | null, method: string, endpoint: string): Promise<void> {
+  private async writeAudit(workspaceId: string, sessionId: string | null, method: string, endpoint: string): Promise<void> {
     await this.prisma.auditLog.create({
-      data: { sessionId: sessionId ?? undefined, method, endpoint, statusCode: 200 },
+      data: { workspaceId, sessionId: sessionId ?? undefined, method, endpoint, statusCode: 200 },
     });
   }
 
@@ -153,7 +154,7 @@ export class InboxService {
       data,
       include: { contact: true },
     });
-    await this.writeAudit(convo.sessionId, 'PATCH', `/inbox/conversations/${conversationId}`);
+    await this.writeAudit(workspaceId, convo.sessionId, 'PATCH', `/inbox/conversations/${conversationId}`);
     this.events.emit({ type: 'conversation.update', workspaceId, conversationId });
     return this.toConversationView(updated);
   }
@@ -171,28 +172,67 @@ export class InboxService {
     return { ok: true, unreadCount: 0 };
   }
 
-  /** Start a new conversation by sending the first text message to a number. */
+  /** Start a new conversation with text or an approved Meta template. */
   async startConversation(
     userId: string,
     workspaceId: string,
-    dto: { sessionId: string; to: string; text: string },
+    dto: StartConversationDto,
   ): Promise<{ conversationId: string }> {
     await this.assertMember(workspaceId, userId);
     await this.workspaces.assertProviderSession(userId, workspaceId, dto.sessionId);
     const phone = String(dto.to).replace(/[^0-9]/g, '');
-    if (phone.length < 6) throw new BadRequestException('Enter a valid phone number with country code.');
+    if (phone.length < 6 || phone.length > 40) {
+      throw new BadRequestException('Enter a valid phone number with country code.');
+    }
     const jid = `${phone}@s.whatsapp.net`;
-
     const { waServerUrl, token } = await this.workspaces.getDecryptedToken(userId, workspaceId);
-    const endpoint =
-      `${waServerUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(dto.sessionId)}/messages/text`;
+
+    const kind = dto.kind;
+    if (kind !== 'text' && kind !== 'template') {
+      throw new BadRequestException('Choose a text or template start payload.');
+    }
+
+    let endpoint: string;
+    let sendBody: Record<string, unknown>;
+    let messageBody: string;
+    let messagePayload: Prisma.InputJsonValue | undefined;
+    if (kind === 'template') {
+      const templateName = dto.templateName?.trim();
+      const languageCode = dto.languageCode?.trim();
+      const bodyParams = dto.bodyParams ?? [];
+      if (!templateName || !languageCode || dto.text !== undefined) {
+        throw new BadRequestException('Template starts require a name and language code, not text.');
+      }
+      if (templateName.length > 512 || languageCode.length > 15) {
+        throw new BadRequestException('Template name or language code is too long.');
+      }
+      if (!Array.isArray(dto.bodyParams) || bodyParams.length > 20 || bodyParams.some((param) => typeof param !== 'string' || !param.trim() || param.length > 1024)) {
+        throw new BadRequestException('Template body parameters are invalid or too long.');
+      }
+      endpoint =
+        `${waServerUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(dto.sessionId)}/messages/template`;
+      sendBody = { to: phone, name: templateName, languageCode, bodyParams };
+      messageBody = `📋 Template: ${templateName}${bodyParams.length ? ' — ' + bodyParams.join(', ') : ''}`;
+      messagePayload = { templateName, languageCode, bodyParams };
+    } else {
+      if (dto.templateName !== undefined || dto.languageCode !== undefined || dto.bodyParams !== undefined) {
+        throw new BadRequestException('Template fields require kind "template".');
+      }
+      if (typeof dto.text !== 'string' || !dto.text.length) {
+        throw new BadRequestException('Enter a first message.');
+      }
+      endpoint =
+        `${waServerUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(dto.sessionId)}/messages/text`;
+      sendBody = { to: phone, text: dto.text };
+      messageBody = dto.text;
+    }
 
     let resp: globalThis.Response;
     try {
       resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'X-Api-Token': token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: phone, text: dto.text }),
+        body: JSON.stringify(sendBody),
       });
     } catch {
       throw new ServiceUnavailableException('WA Server unreachable. Message not sent.');
@@ -229,7 +269,8 @@ export class InboxService {
           waMessageId,
           direction: 'OUTBOUND',
           type: 'text',
-          body: dto.text,
+          body: messageBody,
+          ...(messagePayload ? { payload: messagePayload } : {}),
           status: 'SENT',
           fromMe: true,
           waTimestamp,
@@ -237,12 +278,12 @@ export class InboxService {
       });
       await tx.conversation.update({
         where: { id: convo.id },
-        data: { lastPreview: dto.text.slice(0, 140), lastMessageAt: waTimestamp },
+        data: { lastPreview: messageBody.slice(0, 140), lastMessageAt: waTimestamp },
       });
       return convo.id;
     });
 
-    await this.writeAudit(dto.sessionId, 'POST', `/inbox/conversations`);
+    await this.writeAudit(workspaceId, dto.sessionId, 'POST', `/inbox/conversations`);
     this.events.emit({ type: 'message.new', workspaceId, conversationId });
     return { conversationId };
   }
@@ -392,7 +433,7 @@ export class InboxService {
 
     // Reactions attach to an existing message — nothing to persist in the thread.
     if (kind === 'reaction') {
-      await this.writeAudit(convo.sessionId, 'POST', `/inbox/conversations/${conversationId}/messages`);
+      await this.writeAudit(workspaceId, convo.sessionId, 'POST', `/inbox/conversations/${conversationId}/messages`);
       return { ok: true };
     }
 
@@ -427,7 +468,7 @@ export class InboxService {
       data: { lastPreview: preview, lastMessageAt: waTimestamp },
     });
 
-    await this.writeAudit(convo.sessionId, 'POST', `/inbox/conversations/${conversationId}/messages`);
+    await this.writeAudit(workspaceId, convo.sessionId, 'POST', `/inbox/conversations/${conversationId}/messages`);
     this.events.emit({ type: 'message.new', workspaceId, conversationId });
     return message;
   }

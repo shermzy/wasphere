@@ -50,7 +50,7 @@ export function RegisterForm() {
     <div className="flex min-h-screen">
       <div className="flex w-full flex-col justify-between px-8 py-10 sm:px-12 lg:w-[44%]">
         <div className="flex items-center gap-2">
-          <MessageSquare className="text-primary" size={22} />
+          <MessageSquare className="text-primary" size={22} aria-hidden="true" />
           <span className="text-lg font-bold tracking-tight">WaSphere</span>
         </div>
 
@@ -68,10 +68,13 @@ export function RegisterForm() {
                 type="email"
                 placeholder="admin@example.com"
                 autoComplete="email"
+                name="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 disabled={loading}
+                aria-invalid={!!error}
+                aria-describedby={error ? "register-error" : undefined}
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -81,17 +84,20 @@ export function RegisterForm() {
                 type="password"
                 placeholder="••••••••"
                 autoComplete="new-password"
+                name="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 disabled={loading}
                 minLength={8}
+                aria-invalid={!!error}
+                aria-describedby={error ? "register-error" : undefined}
               />
             </div>
             {error && (
-              <p className="text-sm text-destructive">{error}</p>
+              <p id="register-error" role="alert" className="text-sm text-destructive">{error}</p>
             )}
-            <Button type="submit" className="w-full mt-1" disabled={loading}>
+            <Button type="submit" className="w-full mt-1" disabled={loading} aria-busy={loading}>
               {loading ? "Creating account…" : "Create account"}
             </Button>
           </form>
@@ -111,7 +117,7 @@ export function RegisterForm() {
 
       <div className="hidden lg:flex lg:flex-1 items-center justify-center bg-primary/5 border-l">
         <div className="text-center space-y-3 px-8">
-          <MessageSquare className="mx-auto text-primary" size={48} />
+          <MessageSquare className="mx-auto text-primary" size={48} aria-hidden="true" />
           <p className="text-lg font-semibold text-foreground">WaSphere</p>
           <p className="text-sm text-muted-foreground max-w-xs">
             Self-hosted WhatsApp automation. Multi-session, multi-webhook, developer-first.

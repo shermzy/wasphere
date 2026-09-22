@@ -19,7 +19,13 @@ export class McpController {
   @ApiExcludeEndpoint()
   async handle(@Req() req: McpRequest, @Res() res: Response): Promise<void> {
     const user = req.user;
-    if (!user?.apiKeyId || !user.userId || !user.workspaceId || !user.permissions) {
+    if (
+      !user?.apiKeyId ||
+      !user.userId ||
+      !user.workspaceId ||
+      !user.permissions ||
+      !Object.prototype.hasOwnProperty.call(user, 'sessionScope')
+    ) {
       throw new UnauthorizedException('MCP requires a project-routing API key');
     }
 

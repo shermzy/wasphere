@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { toast } from "sonner"
-import { Copy, Check, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react"
+import { Copy, Check, AlertTriangle, Eye, EyeOff } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import type { Webhook } from "@/components/webhooks/webhooks-tab"
 
 // ─── Event groups ─────────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ import type { Webhook } from "@/components/webhooks/webhooks-tab"
 const EVENT_GROUPS = [
   {
     label: "Messages",
-    events: ["message.sent", "message.delivered", "message.read", "message.failed", "message.received"],
+    events: ["message.sent", "message.delivered", "message.read", "message.failed", "message.received", "poll.vote"],
   },
   {
     label: "Sessions",
@@ -41,6 +42,7 @@ const EVENT_LABELS: Record<string, string> = {
   "message.read": "Message Read",
   "message.failed": "Message Failed",
   "message.received": "Message Received",
+  "poll.vote": "Poll Vote",
   "session.connected": "Session Connected",
   "session.disconnected": "Session Disconnected",
   "session.qr": "Session QR Code",
@@ -108,14 +110,17 @@ export function WebhookAddDialog({ open, onClose, onCreated }: WebhookAddDialogP
   const [urlError, setUrlError] = React.useState<string | null>(null)
   const [selectedEvents, setSelectedEvents] = React.useState<string[]>([])
   const [wildcard, setWildcard] = React.useState(false)
-  const [secretExpanded, setSecretExpanded] = React.useState(false)
+  const [secretMode, setSecretMode] = React.useState<"generate" | "custom">("generate")
+  const [customSecret, setCustomSecret] = React.useState("")
+  const [customSecretVisible, setCustomSecretVisible] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [signingSecret, setSigningSecret] = React.useState<string | null>(null)
 
   const reset = () => {
     setName(""); setUrl(""); setUrlError(null)
-    setSelectedEvents([]); setWildcard(false); setSecretExpanded(false)
+    setSelectedEvents([]); setWildcard(false); setSecretMode("generate")
+    setCustomSecret(""); setCustomSecretVisible(false)
     setSubmitting(false); setError(null); setSigningSecret(null)
   }
 
@@ -149,20 +154,40 @@ export function WebhookAddDialog({ open, onClose, onCreated }: WebhookAddDialogP
     if (urlError) return
     const events = wildcard ? ["*"] : selectedEvents
     if (events.length === 0) { setError("Select at least one event."); return }
+    if (secretMode === "custom") {
+      if (/\p{Cc}/u.test(customSecret)) {
+        setError("Signing secret must not contain control characters.")
+        return
+      }
+      const length = customSecret.trim().length
+      if (length < 32 || length > 256) {
+        setError("Signing secret must be 32–256 characters after trimming.")
+        return
+      }
+    }
 
     setSubmitting(true)
     try {
       const res = await fetch("/api/webhooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), url, events }),
+        body: JSON.stringify({
+          name: name.trim(),
+          url,
+          events,
+          ...(secretMode === "custom" ? { signingSecret: customSecret } : {}),
+        }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         const msg = Array.isArray(data.message) ? data.message.join("\n") : (data.message ?? "Failed to create webhook.")
         setError(msg); return
       }
-      setSigningSecret(data.signingSecret ?? null)
+      if (typeof data.signingSecret !== "string") {
+        setError("Webhook was saved, but its one-time signing secret was not returned.")
+        return
+      }
+      setSigningSecret(data.signingSecret)
       onCreated(data as Webhook)
     } catch {
       setError("Could not reach the server.")
@@ -208,7 +233,7 @@ export function WebhookAddDialog({ open, onClose, onCreated }: WebhookAddDialogP
                 onChange={(e) => { setUrl(e.target.value); validateUrl(e.target.value) }}
                 required
               />
-              {urlError && <p className="text-xs text-destructive">{urlError}</p>}
+              {urlError && <p className="text-xs text-destructive" role="alert" aria-live="assertive">{urlError}</p>}
             </div>
 
             {/* Events */}
@@ -219,6 +244,7 @@ export function WebhookAddDialog({ open, onClose, onCreated }: WebhookAddDialogP
                   <Checkbox
                     checked={wildcard}
                     onCheckedChange={(v) => handleWildcard(v === true)}
+                    aria-label="Subscribe to all webhook events"
                   />
                   <span className="text-xs text-zinc-700 dark:text-zinc-300">All (*)</span>
                 </label>
@@ -234,6 +260,7 @@ export function WebhookAddDialog({ open, onClose, onCreated }: WebhookAddDialogP
                             checked={selectedEvents.includes(ev)}
                             onCheckedChange={() => toggleEvent(ev)}
                             disabled={wildcard}
+                            aria-label={`Subscribe to ${eventLabel(ev)}`}
                           />
                           <span className="text-xs text-zinc-700 dark:text-zinc-300">{eventLabel(ev)}</span>
                         </label>
@@ -244,26 +271,60 @@ export function WebhookAddDialog({ open, onClose, onCreated }: WebhookAddDialogP
               </div>
             </div>
 
-            {/* Custom signing secret — collapsed toggle (field not yet in DTO, shown as info) */}
-            <div className="rounded-lg border">
-              <button
-                type="button"
-                onClick={() => setSecretExpanded((v) => !v)}
-                className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium text-foreground hover:bg-accent/40 rounded-lg transition-colors"
+            {/* Signing secret */}
+            <div className="flex flex-col gap-2">
+              <Label className="text-sm font-medium text-foreground">Signing secret</Label>
+              <RadioGroup
+                value={secretMode}
+                onValueChange={(value) => setSecretMode(value as "generate" | "custom")}
+                className="grid grid-cols-1 gap-2 sm:grid-cols-2"
               >
-                <span>Custom signing secret <span className="text-zinc-400 font-light text-xs">(optional)</span></span>
-                {secretExpanded ? <ChevronUp className="size-4 text-zinc-400" /> : <ChevronDown className="size-4 text-zinc-400" />}
-              </button>
-              {secretExpanded && (
-                <div className="px-3 pb-3">
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    A unique signing secret is generated automatically. Custom secrets are coming in a future release.
-                  </p>
+                <label htmlFor="wh-secret-generate" className="flex cursor-pointer items-start gap-2 rounded-lg border border-input p-3 transition-colors hover:bg-muted/40 has-[[data-checked]]:border-primary has-[[data-checked]]:bg-primary/5">
+                  <RadioGroupItem id="wh-secret-generate" value="generate" className="mt-0.5" />
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium">Generate automatically</span>
+                    <span className="text-xs text-muted-foreground">Recommended for most integrations.</span>
+                  </span>
+                </label>
+                <label htmlFor="wh-secret-custom" className="flex cursor-pointer items-start gap-2 rounded-lg border border-input p-3 transition-colors hover:bg-muted/40 has-[[data-checked]]:border-primary has-[[data-checked]]:bg-primary/5">
+                  <RadioGroupItem id="wh-secret-custom" value="custom" className="mt-0.5" />
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium">Use my secret</span>
+                    <span className="text-xs text-muted-foreground">Bring an existing integration secret.</span>
+                  </span>
+                </label>
+              </RadioGroup>
+              {secretMode === "custom" && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="relative">
+                    <Input
+                      id="wh-custom-secret"
+                      type={customSecretVisible ? "text" : "password"}
+                      value={customSecret}
+                      onChange={(e) => setCustomSecret(e.target.value)}
+                      placeholder="32–256 characters"
+                      maxLength={256}
+                      autoComplete="new-password"
+                      className="pr-10 font-mono text-xs placeholder:font-sans"
+                      aria-label="Custom signing secret"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="absolute right-1 top-1/2 -translate-y-1/2"
+                      onClick={() => setCustomSecretVisible((visible) => !visible)}
+                      aria-label={customSecretVisible ? "Hide signing secret" : "Show signing secret"}
+                    >
+                      {customSecretVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">The value is trimmed, validated, and shown once after creation.</p>
                 </div>
               )}
             </div>
 
-            {error && <p className="text-xs text-destructive whitespace-pre-line">{error}</p>}
+            {error && <p className="text-xs text-destructive whitespace-pre-line" role="alert" aria-live="assertive">{error}</p>}
 
             <DialogFooter showCloseButton>
               <Button type="submit" disabled={submitting || !!urlError}>

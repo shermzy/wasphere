@@ -79,6 +79,7 @@ export interface IWhatsAppAdapter {
   getAllSessions(): SessionInfo[];
   deleteSession(sessionId: string): Promise<void>;
   logoutSession(sessionId: string): Promise<void>;
+  restartSession(sessionId: string): Promise<SessionInfo>;
   /** Returns the session directory path for this sessionId */
   getSessionPath(sessionId: string): string;
   patchSessionConfig(sessionId: string, patch: Partial<SessionConfig>): Promise<{ config: SessionConfig }>;

@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -42,4 +43,15 @@ export class CreateWebhookDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Optional HMAC signing secret. It is trimmed, shown once, and never returned by list endpoints.',
+    minLength: 32,
+    maxLength: 256,
+    writeOnly: true,
+  })
+  @IsString()
+  @Matches(/^\P{Cc}*$/u, { message: 'signingSecret must not contain control characters' })
+  @IsOptional()
+  signingSecret?: string;
 }

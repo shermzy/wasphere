@@ -6,14 +6,25 @@ const { InboxService } = require('../dist/inbox/inbox.service');
 const principal = { userId: 'operator' };
 const workspaceId = 'workspace-a';
 
-function member() { return { id: 'membership' }; }
+function member() { return { role: 'ADMIN', customRole: null }; }
 function response(body) { return Response.json(body); }
+
+test('project service enforces the projects capability beyond the controller guard', async () => {
+  const service = new ProjectsService({
+    workspaceMember: {
+      findUnique: async () => ({ role: 'MEMBER', customRole: { capabilities: ['inbox'] } }),
+    },
+  }, {});
+
+  await assert.rejects(() => service.list(principal, workspaceId), /projects permission/i);
+});
 
 test('binding requires confirmation and stores the chosen exact group ID with an audit event', async () => {
   const writes = [];
   const prisma = {
     workspaceMember: { findUnique: async () => member() },
     $transaction: async (callback) => callback({
+      $queryRaw: async () => [{ workspaceId }],
       workspaceMember: { findUnique: async () => member() },
       contact: { upsert: async (args) => { writes.push(['contact', args]); return { id: 'contact-2' }; } },
       conversation: { upsert: async (args) => { writes.push(['conversation', args]); return { id: 'conversation-2' }; } },
@@ -84,12 +95,36 @@ test('binding rejects a direct chat absent from the selected session', async () 
   }
 });
 
+test('binding aborts if exact session ownership changes before the transaction write', async () => {
+  const service = new ProjectsService({
+    workspaceMember: { findUnique: async () => member() },
+    $transaction: async (callback) => callback({
+      $queryRaw: async () => [{ workspaceId: 'workspace-b' }],
+    }),
+  }, {
+    assertProviderSession: async () => {},
+    getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => url.endsWith('/groups')
+    ? response([{ id: 'exact@g.us', subject: 'Exact group' }])
+    : response({ status: 'connected' });
+  try {
+    await assert.rejects(() => service.create(principal, workspaceId, {
+      name: 'Exact', routeKey: 'exact', sessionId: 'session-1', targetJid: 'exact@g.us', confirmed: true,
+    }), /ownership changed/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('sync stores exact WaSphere group metadata inside the active workspace', async () => {
   const writes = [];
   let sessionChecks = 0;
   const prisma = {
     workspaceMember: { findUnique: async () => member() },
     $transaction: async (callback) => callback({
+      $queryRaw: async () => [{ workspaceId }],
       workspaceMember: { findUnique: async () => member() },
       contact: { upsert: async (args) => { writes.push(['contact', args]); return { id: 'contact-1' }; } },
       conversation: { upsert: async (args) => { writes.push(['conversation', args]); } },
@@ -145,6 +180,31 @@ test('sync aborts if the session disconnects while WaSphere metadata is loading'
   }
 });
 
+test('sync aborts if the session changes workspace ownership while metadata is loading', async () => {
+  let ownershipChecks = 0;
+  const service = new ProjectsService({
+    workspaceMember: { findUnique: async () => member() },
+    $transaction: async (callback) => callback({}),
+  }, {
+    assertProviderSession: async () => {
+      ownershipChecks += 1;
+      if (ownershipChecks === 2) throw new Error('Session not found in this workspace');
+    },
+    getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/sessions/session-1')) return response({ status: 'connected' });
+    return response([{ id: 'exact@g.us', subject: 'Exact group' }]);
+  };
+  try {
+    await assert.rejects(() => service.syncTargets(principal, workspaceId, 'session-1'), /Session not found in this workspace/);
+    assert.equal(ownershipChecks, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function existingProject(overrides = {}) {
   return {
     id: 'route-1', workspaceId, conversationId: 'conversation-1', name: 'Old name', routeKey: 'operations',
@@ -163,6 +223,7 @@ test('enable rejects a concurrent confirmed retarget instead of restoring the st
     workspaceMember: { findUnique: async () => member() },
     projectRoute: { findFirst: async () => existing },
     $transaction: async (callback) => callback({
+      $queryRaw: async () => [{ workspaceId }],
       workspaceMember: { findUnique: async () => member() },
       projectRoute: { updateMany: async () => ({ count: 0 }) },
     }),
@@ -195,6 +256,7 @@ test('combined updates audit every change and return live availability', async (
     workspaceMember: { findUnique: async () => member() },
     projectRoute: { findFirst: async () => existing },
     $transaction: async (callback) => callback({
+      $queryRaw: async () => [{ workspaceId }],
       workspaceMember: { findUnique: async () => member() },
       contact: { upsert: async () => ({ id: 'contact-2' }) },
       conversation: { upsert: async () => ({ id: 'conversation-2' }) },
@@ -340,6 +402,92 @@ test('classification targets only load WaSphere chats from sessions owned by the
     assert.deepEqual(targets.map((target) => target.jid), ['owned@g.us']);
     assert.deepEqual(await service.targets(principal, workspaceId, { sessionId: 'foreign-session' }), []);
     assert.equal(requested.some((url) => url.includes('foreign-session/groups')), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('large target discovery dedupes exact IDs, preserves classification, and fetches each owned group collection once', async () => {
+  const directCount = 1500;
+  const contacts = [];
+  const conversations = [];
+  for (let index = 0; index < directCount; index += 1) {
+    const jid = `direct-${index}@s.whatsapp.net`;
+    const contactId = `contact-${index}`;
+    contacts.push({ id: contactId, jid, phone: jid, savedName: null, whatsappName: `Direct ${index}` });
+    conversations.push({
+      id: `conversation-${index}`, sessionId: 'session-a', sessionDeletedAt: null, contactId,
+      contact: contacts[index],
+    });
+  }
+  const liveGroup = { id: 'live@g.us', subject: 'Live group' };
+  const liveConversation = {
+    id: 'conversation-live', sessionId: 'session-a', sessionDeletedAt: null, contactId: 'contact-live',
+    contact: { id: 'contact-live', jid: liveGroup.id, phone: liveGroup.id, savedName: null, whatsappName: liveGroup.subject },
+  };
+  conversations.push(liveConversation);
+  conversations.push({
+    id: 'conversation-db', sessionId: 'session-a', sessionDeletedAt: null, contactId: 'contact-db',
+    contact: { id: 'contact-db', jid: 'db@g.us', phone: 'db@g.us', savedName: null, whatsappName: 'Stored group' },
+  });
+  contacts.push(liveConversation.contact, conversations.at(-1).contact);
+
+  const groupCalls = new Map();
+  const service = new ProjectsService({
+    workspaceMember: { findUnique: async () => member() },
+    projectRoute: {
+      findMany: async () => [
+        {
+          id: 'project-direct', name: 'Direct project', routeKey: 'direct-project', enabled: true,
+          conversationId: 'conversation-0',
+        },
+        {
+          id: 'project-live', name: 'Live project', routeKey: 'live-project', enabled: true,
+          conversationId: 'conversation-live',
+        },
+      ],
+    },
+    conversation: { findMany: async () => conversations },
+    contact: { findMany: async () => contacts },
+  }, {
+    getDecryptedToken: async () => ({ waServerUrl: 'https://wa.example', token: 'test-token' }),
+    listProviderSessionIds: async () => new Set(['session-a', 'session-b']),
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/sessions')) {
+      return response([
+        { id: 'session-a', status: 'connected' },
+        { id: 'session-b', status: 'connected' },
+        { id: 'foreign-session', status: 'connected' },
+      ]);
+    }
+    const match = url.match(/\/api\/sessions\/([^/]+)\/groups$/);
+    if (match) {
+      const sessionId = decodeURIComponent(match[1]);
+      groupCalls.set(sessionId, (groupCalls.get(sessionId) ?? 0) + 1);
+      if (sessionId === 'session-a') return response([liveGroup, liveGroup]);
+      if (sessionId === 'session-b') return response([liveGroup]);
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  try {
+    const targets = await service.targets(principal, workspaceId, {});
+    const liveTargets = targets.filter((target) => target.jid === liveGroup.id);
+    const directProject = targets.find((target) => target.jid === 'direct-0@s.whatsapp.net');
+    const sessionAProject = liveTargets.find((target) => target.sessionId === 'session-a');
+    const sessionBProject = liveTargets.find((target) => target.sessionId === 'session-b');
+
+    assert.equal(targets.length, directCount + 3);
+    assert.equal(liveTargets.length, 2);
+    assert.equal(directProject.assignedProject.routeKey, 'direct-project');
+    assert.equal(sessionAProject.assignedProject.routeKey, 'live-project');
+    assert.equal(sessionBProject.assignedProject, null);
+    assert.equal(targets.some((target) => target.sessionId === 'foreign-session'), false);
+    assert.deepEqual(Object.fromEntries(groupCalls), { 'session-a': 1, 'session-b': 1 });
+
+    const searched = await service.targets(principal, workspaceId, { q: 'session-b' });
+    assert.deepEqual(searched.map((target) => target.jid), ['live@g.us']);
   } finally {
     globalThis.fetch = originalFetch;
   }

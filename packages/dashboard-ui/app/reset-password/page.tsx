@@ -21,7 +21,7 @@ function ResetForm() {
 
   if (!token) {
     return (
-      <p className="mt-8 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+      <p role="alert" className="mt-8 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
         This reset link is missing its token. Request a new one from the{" "}
         <Link href="/forgot-password" className="underline">forgot-password page</Link>.
       </p>
@@ -66,7 +66,7 @@ function ResetForm() {
 
   if (done) {
     return (
-      <div className="mt-8 rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+      <div role="status" aria-live="polite" className="mt-8 rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
         Your password has been reset. Redirecting you to sign in…
       </div>
     );
@@ -75,7 +75,7 @@ function ResetForm() {
   return (
     <form className="mt-8 flex flex-col gap-5" onSubmit={handleSubmit}>
       {error && (
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+        <p id="reset-password-error" role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
           {error}
         </p>
       )}
@@ -87,10 +87,13 @@ function ResetForm() {
           type="password"
           placeholder="••••••••"
           autoComplete="new-password"
+          name="new-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
           disabled={loading}
+          aria-invalid={!!error}
+          aria-describedby={error ? "reset-password-error" : undefined}
         />
       </div>
 
@@ -101,14 +104,17 @@ function ResetForm() {
           type="password"
           placeholder="••••••••"
           autoComplete="new-password"
+          name="confirm-password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           required
           disabled={loading}
+          aria-invalid={!!error}
+          aria-describedby={error ? "reset-password-error" : undefined}
         />
       </div>
 
-      <Button type="submit" className="w-full mt-1" disabled={loading}>
+      <Button type="submit" className="w-full mt-1" disabled={loading} aria-busy={loading}>
         {loading ? "Resetting…" : "Reset password"}
       </Button>
     </form>
@@ -120,7 +126,7 @@ export default function ResetPasswordPage() {
     <div className="flex min-h-screen items-center justify-center px-6">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-2">
-          <MessageSquare className="text-primary" size={22} />
+          <MessageSquare className="text-primary" size={22} aria-hidden="true" />
           <span className="text-lg font-bold tracking-tight">WaSphere</span>
         </div>
 

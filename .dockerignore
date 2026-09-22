@@ -6,6 +6,9 @@ dist
 **/.next
 .git
 .gitignore
+.ignore
+graft
+packages/graft
 
 # Env files — never bake into images
 .env

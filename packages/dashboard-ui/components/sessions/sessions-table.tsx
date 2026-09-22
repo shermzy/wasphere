@@ -19,6 +19,7 @@ import { StatusDot } from "@/components/ui/status-dot"
 import { SessionsIllustration } from "@/components/empty-states"
 import { NewSessionDialog } from "@/components/sessions/new-session-dialog"
 import { QrDialog } from "@/components/sessions/qr-dialog"
+import { SessionActionConfirmDialog } from "@/components/sessions/session-action-confirm-dialog"
 
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = React.useState(false)
@@ -90,6 +91,11 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
   const [fetchError, setFetchError] = React.useState<string | null>(null)
   const [newDialogOpen, setNewDialogOpen] = React.useState(false)
   const [qrSessionId, setQrSessionId] = React.useState<string | null>(null)
+  const [pendingAction, setPendingAction] = React.useState<{
+    sessionId: string
+    action: "delete" | "logout" | "relink"
+  } | null>(null)
+  const [actionSubmitting, setActionSubmitting] = React.useState(false)
 
   const refreshSessions = async () => {
     try {
@@ -154,22 +160,18 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
   }
 
   const handleRelink = async (sessionId: string) => {
-    // Relink = delete + recreate via QR. Baileys only — a Meta session would be
-    // silently rebuilt as a QR/Baileys session, losing its Cloud API config.
+    // Baileys only — a Meta session must keep its Cloud API credentials.
     if (sessions.find((s) => s.id === sessionId && isMetaSession(s))) {
       toast.error("Meta sessions don't use QR. Delete and recreate it with your Cloud API credentials.")
       return
     }
     try {
-      await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" })
-      const res = await fetch("/api/sessions", {
+      const res = await fetch(`/api/sessions/${sessionId}/restart`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: sessionId }),
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        toast.error(body.message ?? "Failed to restart session.")
+        toast.error(body.message ?? "Failed to relink session.")
         return
       }
       const updated: Session = await res.json()
@@ -179,6 +181,19 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
       setQrSessionId(sessionId)
     } catch {
       toast.error("Could not reach the server.")
+    }
+  }
+
+  const runPendingAction = async () => {
+    if (!pendingAction) return
+    setActionSubmitting(true)
+    try {
+      if (pendingAction.action === "delete") await handleDelete(pendingAction.sessionId)
+      if (pendingAction.action === "logout") await handleLogout(pendingAction.sessionId)
+      if (pendingAction.action === "relink") await handleRelink(pendingAction.sessionId)
+    } finally {
+      setActionSubmitting(false)
+      setPendingAction(null)
     }
   }
 
@@ -244,6 +259,7 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
                         variant="outline"
                         size="sm"
                         onClick={() => setQrSessionId(session.id)}
+                        aria-label={`View QR code for session ${session.id}`}
                       >
                         View QR
                       </Button>
@@ -252,7 +268,8 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleRelink(session.id)}
+                        onClick={() => setPendingAction({ sessionId: session.id, action: "relink" })}
+                        aria-label={`Relink session ${session.id}`}
                       >
                         Relink
                       </Button>
@@ -261,7 +278,8 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleLogout(session.id)}
+                        onClick={() => setPendingAction({ sessionId: session.id, action: "logout" })}
+                        aria-label={`Log out session ${session.id}`}
                       >
                         Logout
                       </Button>
@@ -270,7 +288,8 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={() => handleDelete(session.id)}
+                        onClick={() => setPendingAction({ sessionId: session.id, action: "delete" })}
+                        aria-label={`Delete session ${session.id}`}
                       >
                         Delete
                       </Button>
@@ -304,6 +323,17 @@ export function SessionsTable({ initialSessions, canCreate, canManage }: Session
             setQrSessionId(null)
             refreshSessions()
           }}
+        />
+      )}
+
+      {pendingAction && (
+        <SessionActionConfirmDialog
+          open
+          sessionId={pendingAction.sessionId}
+          action={pendingAction.action}
+          submitting={actionSubmitting}
+          onClose={() => { if (!actionSubmitting) setPendingAction(null) }}
+          onConfirm={runPendingAction}
         />
       )}
     </div>

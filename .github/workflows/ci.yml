@@ -15,6 +15,34 @@ jobs:
   build:
     name: Build & typecheck
     runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://wasphere:wasphere_test@localhost:5432/wasphere_test
+      TEST_DATABASE_URL: postgresql://wasphere:wasphere_test@localhost:5432/wasphere_test
+      JWT_SECRET: ci-test-jwt-secret-012345678901234567890123456789
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      INTERNAL_WEBHOOK_SECRET: ci-test-internal-webhook-secret-0123456789
+      CORS_ORIGIN: http://127.0.0.1:3004
+      DASHBOARD_UI_URL: http://127.0.0.1:3004
+      WA_TOKEN: ci-test-wa-token
+      WEBHOOK_SIGNING_SECRET: ci-test-webhook-signing-secret
+      META_CREDENTIALS_ENCRYPTION_KEY: 1111111111111111111111111111111111111111111111111111111111111111
+      META_PROVIDER_ENABLED: "false"
+      SMTP_HOST: ""
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wasphere
+          POSTGRES_PASSWORD: wasphere_test
+          POSTGRES_DB: wasphere_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wasphere -d wasphere_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,11 +55,26 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @wasphere/dashboard-api exec prisma generate
+
+      - name: Apply test migrations
+        run: pnpm --filter @wasphere/dashboard-api exec prisma migrate deploy
+
+      - name: Run dashboard-api tests
+        run: pnpm --filter @wasphere/dashboard-api test
+
+      - name: Run wa-server tests
+        run: pnpm --filter @wasphere/wa-server test
+
+      - name: Run dashboard-ui logic tests
+        run: pnpm --filter dashboard-ui test
 
       - name: Build all packages (wa-server · dashboard-api · dashboard-ui)
         run: pnpm build

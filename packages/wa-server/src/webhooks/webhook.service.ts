@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -10,6 +10,8 @@ function computeSignature(secret: string, timestamp: number, rawBody: string): s
   const hex = crypto.createHmac('sha256', secret).update(signedString).digest('hex');
   return `v1,sha256=${hex}`;
 }
+
+const MAX_RESPONSE_DIAGNOSTIC_BYTES = 4096;
 
 export interface WebhookPayload {
   event: string;
@@ -50,10 +52,15 @@ function persistUrl(url: string): void {
 function isValidCallbackUrl(url: string): boolean {
   if (!url) return false;
   try {
-    const { hostname } = new URL(url);
+    const { hostname, protocol, username, password } = new URL(url);
     // Reject any URL that resolves back to this process's own hostname
     const ownHost = process.env.HOSTNAME ?? 'wa-server';
-    return hostname !== ownHost && hostname !== 'wa-server' && hostname !== 'localhost';
+    return (protocol === 'http:' || protocol === 'https:')
+      && !username
+      && !password
+      && hostname !== ownHost
+      && hostname !== 'wa-server'
+      && hostname !== 'localhost';
   } catch {
     return false;
   }
@@ -68,10 +75,12 @@ export class WebhookService implements OnModuleInit {
 
   onModuleInit(): void {
     const persisted = loadPersistedUrl();
-    if (persisted) {
+    if (isValidCallbackUrl(persisted)) {
       this.dashboardUrl = persisted;
       console.log(`[Webhook] Loaded callback URL from disk: ${persisted}`);
       return;
+    } else if (persisted) {
+      console.warn('[Webhook] Ignoring invalid persisted callback URL.');
     }
 
     const envUrl = process.env.DASHBOARD_WEBHOOK_URL ?? '';
@@ -84,6 +93,9 @@ export class WebhookService implements OnModuleInit {
   }
 
   setDashboardUrl(url: string) {
+    if (!isValidCallbackUrl(url)) {
+      throw new BadRequestException('Callback URL must be an external HTTP(S) dashboard endpoint.');
+    }
     const secret = process.env.WEBHOOK_SIGNING_SECRET ?? '';
     if (url && (!secret || secret.length < 32)) {
       console.warn(
@@ -114,8 +126,8 @@ export class WebhookService implements OnModuleInit {
     try {
       await this.post(this.dashboardUrl, payload);
     } catch (err) {
-      // Silent fail — dashboard might be temporarily down
       console.warn(`[Webhook] Failed to fire event ${event}: ${(err as Error).message}`);
+      throw err;
     }
   }
 
@@ -134,7 +146,7 @@ export class WebhookService implements OnModuleInit {
       try {
         parsed = new URL(url);
       } catch {
-        return reject(new Error(`Invalid DASHBOARD_WEBHOOK_URL: ${url}`));
+        return reject(new Error('Invalid dashboard webhook URL'));
       }
 
       const mod = parsed.protocol === 'https:' ? https : http;
@@ -155,8 +167,28 @@ export class WebhookService implements OnModuleInit {
           },
         },
         (res) => {
-          res.resume(); // drain to free socket
-          resolve();
+          const statusCode = res.statusCode ?? 0;
+          let responseBytes = 0;
+          res.on('data', (chunk: Buffer | string) => {
+            responseBytes = Math.min(
+              MAX_RESPONSE_DIAGNOSTIC_BYTES,
+              responseBytes + (Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk)),
+            );
+          });
+          res.on('end', () => {
+            if (statusCode >= 200 && statusCode < 300) {
+              resolve();
+              return;
+            }
+            const capped = responseBytes === MAX_RESPONSE_DIAGNOSTIC_BYTES ? '+' : '';
+            reject(
+              new Error(
+                `Webhook delivery failed with HTTP ${statusCode} (response body ${capped}${responseBytes} bytes)`,
+              ),
+            );
+          });
+          res.on('error', reject);
+          res.resume(); // drain without retaining an unbounded response body
         },
       );
 

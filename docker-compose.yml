@@ -53,6 +53,10 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # AI reply drafting is opt-in; an incomplete configuration stays disabled.
+      AI_REPLY_BASE_URL: ${AI_REPLY_BASE_URL:-}
+      AI_REPLY_API_KEY: ${AI_REPLY_API_KEY:-}
+      AI_REPLY_MODEL: ${AI_REPLY_MODEL:-}
       NODE_ENV: production
     ports:
       - "${DASHBOARD_API_PORT:-3000}:3000"
@@ -61,7 +65,7 @@ services:
         condition: service_healthy
     networks: [internal]
     healthcheck:
-      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/health || exit 1']
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/health/ready || exit 1']
       interval: 15s
       timeout: 5s
       retries: 5
@@ -86,10 +90,13 @@ services:
       # Meta WhatsApp Cloud API provider (v1.2 · opt-in). Ships DISABLED — set
       # META_PROVIDER_ENABLED=true in your env to activate. See .env.example.
       META_PROVIDER_ENABLED: ${META_PROVIDER_ENABLED:-false}
+      META_CREDENTIALS_ENCRYPTION_KEY: ${META_CREDENTIALS_ENCRYPTION_KEY:-}
       GRAPH_VERSION: ${GRAPH_VERSION:-v22.0}
       NODE_ENV: production
     ports:
-      - "${WA_SERVER_PORT:-3001}:3001"
+      # Token-protected API: host access is loopback-only by default. Keep
+      # dashboard traffic on the internal network via http://wa-server:3001.
+      - "${WA_SERVER_BIND_ADDRESS:-127.0.0.1}:${WA_SERVER_PORT:-3001}:3001"
     volumes:
       - wa-sessions:/app/sessions
     depends_on:

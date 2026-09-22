@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -45,4 +46,15 @@ export class UpdateWebhookDto {
   @Max(5)
   @IsOptional()
   retryMax?: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional replacement HMAC signing secret. It is trimmed and shown once when rotated.',
+    minLength: 32,
+    maxLength: 256,
+    writeOnly: true,
+  })
+  @IsString()
+  @Matches(/^\P{Cc}*$/u, { message: 'signingSecret must not contain control characters' })
+  @IsOptional()
+  signingSecret?: string;
 }

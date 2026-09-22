@@ -12,6 +12,7 @@ import { InboxService } from './inbox.service';
 import { InboxIngestService } from './inbox-ingest.service';
 import { InboxEventsService } from './inbox-events.service';
 import { InboxSseService } from './inbox-sse.service';
+import { AutomationService } from '../automations/automations.service';
 
 // PrismaModule imported explicitly (its @Global export wasn't resolving into this
 // module's injector inside the ApiKeys<->Auth resolution chain).
@@ -29,9 +30,9 @@ import { InboxSseService } from './inbox-sse.service';
     }),
   ],
   controllers: [InboxController, InboxSseController, RoutesController],
-  providers: [InboxService, InboxIngestService, InboxEventsService, InboxSseService, CapabilityGuard],
+  providers: [InboxService, InboxIngestService, InboxEventsService, InboxSseService, AutomationService, CapabilityGuard],
   // InboxIngestService -> consumed by InternalModule (ingestion hook)
   // InboxEventsService -> consumed by the SSE layer
-  exports: [InboxService, InboxIngestService, InboxEventsService],
+  exports: [InboxService, InboxIngestService, InboxEventsService, AutomationService],
 })
 export class InboxModule {}

@@ -4,8 +4,8 @@ import { IsUrl, registerDecorator, ValidationOptions } from 'class-validator';
 type IsUrlOptions = Parameters<typeof IsUrl>[0];
 
 export const URL_OPTIONS: IsUrlOptions = process.env.NODE_ENV === 'production'
-  ? { require_tld: true, require_protocol: true }
-  : { require_tld: false, require_protocol: true };
+  ? { protocols: ['http', 'https'], require_tld: true, require_protocol: true }
+  : { protocols: ['http', 'https'], require_tld: false, require_protocol: true };
 
 export function IsUrlOrDataUri(opts?: ValidationOptions) {
   return function (object: object, propertyName: string) {

@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /repo
 RUN apk add --no-cache git python3 make g++ && npm install -g pnpm@9 --quiet
 
@@ -19,7 +19,7 @@ RUN pnpm --filter @wasphere/wa-server build
 
 RUN pnpm deploy --filter @wasphere/wa-server --prod /deploy
 
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 
 COPY --from=builder /deploy/node_modules ./node_modules

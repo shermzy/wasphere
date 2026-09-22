@@ -85,7 +85,7 @@ function TableSkeleton() {
 
 // ─── Test fire result panel ───────────────────────────────────────────────────
 
-function TestResultPanel({ result, onDismiss }: { result: TestState; onDismiss: () => void }) {
+function TestResultPanel({ result, webhookName, onDismiss }: { result: TestState; webhookName: string; onDismiss: () => void }) {
   React.useEffect(() => {
     if (result === "loading") return
     const t = setTimeout(onDismiss, 30_000)
@@ -94,8 +94,8 @@ function TestResultPanel({ result, onDismiss }: { result: TestState; onDismiss: 
 
   if (result === "loading") {
     return (
-      <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" />
+      <div role="status" aria-live="polite" className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
         <span>Sending test event…</span>
       </div>
     )
@@ -103,22 +103,22 @@ function TestResultPanel({ result, onDismiss }: { result: TestState; onDismiss: 
 
   const is2xx = result.statusCode >= 200 && result.statusCode < 300
   return (
-    <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
+    <div role={result.success ? "status" : "alert"} aria-live="polite" aria-atomic="true" className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
       result.success
         ? "border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30"
         : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30"
     }`}>
       {result.success
-        ? <CheckCircle2 className="size-3.5 shrink-0 text-green-600 dark:text-green-400" />
-        : <XCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" />}
+        ? <CheckCircle2 className="size-3.5 shrink-0 text-green-600 dark:text-green-400" aria-hidden="true" />
+        : <XCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />}
       <span className={`font-mono font-semibold ${is2xx ? "text-green-700 dark:text-green-300" : "text-red-700 dark:text-red-300"}`}>
         {result.statusCode}
       </span>
       <span className="text-zinc-600 dark:text-zinc-400">
         {result.success ? "Test delivered successfully." : (result.error ?? "Delivery failed.")}
       </span>
-      <button onClick={onDismiss} className="ml-auto text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">
-        <X className="size-3" />
+      <button onClick={onDismiss} aria-label={`Dismiss test result for ${webhookName}`} className="ml-auto text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+        <X className="size-3" aria-hidden="true" />
       </button>
     </div>
   )
@@ -153,7 +153,7 @@ function DeleteConfirmDialog({
           This cannot be undone.
         </p>
         <DialogFooter showCloseButton>
-          <Button variant="destructive" onClick={handleDelete} disabled={submitting}>
+          <Button variant="destructive" onClick={handleDelete} disabled={submitting} aria-busy={submitting}>
             {submitting ? "Deleting…" : "Delete"}
           </Button>
         </DialogFooter>
@@ -213,7 +213,7 @@ export function WebhooksTab() {
         {loading ? (
           <TableSkeleton />
         ) : fetchError ? (
-          <p className="text-sm text-destructive">{fetchError}</p>
+          <p role="alert" className="text-sm text-destructive">{fetchError}</p>
         ) : webhooks.length === 0 ? (
           <EmptyState
             illustration={<WebhooksIllustration />}
@@ -268,25 +268,26 @@ export function WebhooksTab() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleTestFire(wh)}
-                                aria-label="Test fire"
+                                aria-label={`Send test event for ${wh.name}`}
                                 disabled={testResults[wh.id] === "loading"}
+                                aria-busy={testResults[wh.id] === "loading"}
                               >
-                                <Zap className="size-4" />
+                                <Zap className="size-4" aria-hidden="true" />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>Send test event</TooltipContent>
                           </Tooltip>
-                          <Button variant="ghost" size="icon" onClick={() => setEditTarget(wh)} aria-label="Edit">
-                            <Pencil className="size-4" />
+                          <Button variant="ghost" size="icon" onClick={() => setEditTarget(wh)} aria-label={`Edit webhook ${wh.name}`}>
+                            <Pencil className="size-4" aria-hidden="true" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => setDeleteTarget(wh)}
-                            aria-label="Delete"
+                            aria-label={`Delete webhook ${wh.name}`}
                             className="text-destructive hover:text-destructive"
                           >
-                            <Trash2 className="size-4" />
+                            <Trash2 className="size-4" aria-hidden="true" />
                           </Button>
                         </div>
                       </TableCell>
@@ -303,7 +304,7 @@ export function WebhooksTab() {
               return (
                 <div key={id} className="flex flex-col gap-1">
                   <p className="text-xs text-zinc-500 font-medium">{wh.name}</p>
-                  <TestResultPanel result={result} onDismiss={() => dismissTest(id)} />
+                  <TestResultPanel result={result} webhookName={wh.name} onDismiss={() => dismissTest(id)} />
                 </div>
               )
             })}

@@ -4,6 +4,10 @@ import { ArrayMaxSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLengt
 import { Type } from 'class-transformer';
 import { Request } from 'express';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
+import { ApiKeyPermissionGuard } from '../auth/api-key-permission.guard';
+import { CapabilityGuard } from '../auth/capability.guard';
+import { RequireCapability } from '../auth/require-capability.decorator';
+import { RequiresPermission } from '../auth/requires-permission.decorator';
 import { ContactsService } from './contacts.service';
 
 class ListContactsQueryDto {
@@ -54,53 +58,62 @@ interface AuthedRequest extends Request {
 @ApiTags('Contacts')
 @ApiBearerAuth()
 @Controller('workspaces/:workspaceId/contacts')
-@UseGuards(CombinedAuthGuard)
+@UseGuards(CombinedAuthGuard, ApiKeyPermissionGuard, CapabilityGuard)
+@RequireCapability('contacts')
 export class ContactsController {
   constructor(private readonly contacts: ContactsService) {}
 
   @Get()
+  @RequiresPermission('contacts:read')
   @ApiOperation({ summary: 'List/search contacts (the contact book)' })
   list(@Req() req: AuthedRequest, @Param('workspaceId') ws: string, @Query() q: ListContactsQueryDto) {
     return this.contacts.list(req.user.userId, ws, q);
   }
 
   @Get('tags')
+  @RequiresPermission('contacts:read')
   @ApiOperation({ summary: 'Distinct tags used across the workspace' })
   tags(@Req() req: AuthedRequest, @Param('workspaceId') ws: string) {
     return this.contacts.listTags(req.user.userId, ws);
   }
 
   @Post()
+  @RequiresPermission('contacts:write')
   @ApiOperation({ summary: 'Manually add a contact by phone number' })
   create(@Req() req: AuthedRequest, @Param('workspaceId') ws: string, @Body() dto: CreateContactDto) {
     return this.contacts.create(req.user.userId, ws, dto);
   }
 
   @Post('bulk')
+  @RequiresPermission('contacts:write')
   @ApiOperation({ summary: 'Tag or delete many contacts at once' })
   bulk(@Req() req: AuthedRequest, @Param('workspaceId') ws: string, @Body() dto: BulkContactsDto) {
     return this.contacts.bulk(req.user.userId, ws, dto);
   }
 
   @Post('export')
+  @RequiresPermission('contacts:read')
   @ApiOperation({ summary: 'Export contacts to CSV (all, or a selected subset)' })
   export(@Req() req: AuthedRequest, @Param('workspaceId') ws: string, @Body() dto: ExportContactsDto) {
     return this.contacts.exportCsv(req.user.userId, ws, dto.ids);
   }
 
   @Post('import')
+  @RequiresPermission('contacts:write')
   @ApiOperation({ summary: 'Bulk-import contacts (new numbers added, existing skipped)' })
   import(@Req() req: AuthedRequest, @Param('workspaceId') ws: string, @Body() dto: ImportContactsDto) {
     return this.contacts.importContacts(req.user.userId, ws, dto.contacts);
   }
 
   @Patch(':contactId')
+  @RequiresPermission('contacts:write')
   @ApiOperation({ summary: 'Update a contact (saved name, tags, notes)' })
   update(@Req() req: AuthedRequest, @Param('workspaceId') ws: string, @Param('contactId') id: string, @Body() dto: UpdateContactDto) {
     return this.contacts.update(req.user.userId, ws, id, dto);
   }
 
   @Delete(':contactId')
+  @RequiresPermission('contacts:write')
   @ApiOperation({ summary: 'Delete a contact from the book' })
   remove(@Req() req: AuthedRequest, @Param('workspaceId') ws: string, @Param('contactId') id: string) {
     return this.contacts.remove(req.user.userId, ws, id);

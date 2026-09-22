@@ -103,9 +103,8 @@ export class ProxyService {
     }
     if (apiKeyPermissions === undefined) {
       const required = proxyCapabilityRequirement(method, decodedPath);
-      if (required) {
-        await this.workspacesService.assertAnyCapability(userId, workspaceId, required);
-      }
+      if (required === null) throw new ForbiddenException('JWT cannot access this proxy path');
+      await this.workspacesService.assertAnyCapability(userId, workspaceId, required);
     }
 
     let waServerUrl: string;

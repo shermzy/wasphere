@@ -33,23 +33,23 @@ export class InternalController {
   }
 
   @Post('webhook-event')
-  @HttpCode(HttpStatus.ACCEPTED)
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Receive a WhatsApp event from wa-server and fan out to subscribed webhooks',
     description:
       'Called by wa-server only. The exact provider session is resolved to its owning ' +
-      'workspace before delivery. Returns 202 immediately; delivery runs in background.',
+      'workspace before delivery. Returns 200 after Inbox ingestion and webhook fanout complete.',
   })
-  @ApiResponse({ status: 202, description: 'Accepted — fanout dispatched in background' })
+  @ApiResponse({ status: 200, description: 'Completed — Inbox ingestion and webhook fanout finished' })
   @ApiResponse({ status: 400, description: 'Invalid event type or payload' })
   @ApiResponse({ status: 401, description: 'Missing or invalid X-Internal-Secret' })
   async webhookEvent(@Body() dto: WebhookEventDto) {
     const workspaceId = await this.workspaces.workspaceForProviderSession(dto.sessionId);
     if (!workspaceId) throw new NotFoundException('Session is not assigned to a workspace');
-    // Run the two in parallel: existing webhook fan-out + new Inbox ingestion.
-    // Both are fire-and-forget so the 202 returns immediately.
-    this.internalService.fanoutWebhookEvent(workspaceId, dto);
-    this.inboxIngest.ingest(workspaceId, dto);
-    return { accepted: true };
+    await Promise.all([
+      this.internalService.fanoutWebhookEvent(workspaceId, dto),
+      this.inboxIngest.ingestAndWait(workspaceId, dto),
+    ]);
+    return { success: true };
   }
 }

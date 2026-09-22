@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /repo
 RUN apk add --no-cache python3 make g++ && npm install -g pnpm@9 --quiet
 
@@ -21,7 +21,7 @@ RUN pnpm --filter @wasphere/dashboard-api build
 
 RUN pnpm deploy --filter @wasphere/dashboard-api --prod /deploy
 
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 RUN apk add --no-cache wget && npm install -g pnpm@9 prisma@6 --quiet
 

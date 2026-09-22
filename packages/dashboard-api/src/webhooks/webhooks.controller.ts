@@ -67,10 +67,14 @@ export class WebhooksController {
   }
 
   @Patch(':webhookId')
-  @ApiOperation({ summary: 'Update a webhook (name, url, events, active status, retry limit)' })
+  @ApiOperation({
+    summary: 'Update a webhook (metadata or optional signing-secret rotation)',
+    description:
+      'A supplied signingSecret replaces the current secret and is returned exactly once. Omit it to preserve the current secret.',
+  })
   @ApiParam({ name: 'workspaceId', description: 'Workspace UUID' })
   @ApiParam({ name: 'webhookId', description: 'Webhook UUID' })
-  @ApiResponse({ status: 200, description: 'Updated webhook metadata' })
+  @ApiResponse({ status: 200, description: 'Updated webhook metadata, with signingSecret only when rotated' })
   @ApiResponse({ status: 400, description: 'Invalid events or URL' })
   @ApiResponse({ status: 403, description: 'Not a member of this workspace' })
   @ApiResponse({ status: 404, description: 'Webhook not found' })

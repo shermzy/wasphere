@@ -3,15 +3,57 @@
 // WhatsApp behaviour, so it complies with the no-mock-WhatsApp testing rule.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 
 const { MetaCloudProvider } = require('../dist/whatsapp/providers/meta-cloud.provider');
 const { MetaApiError } = require('../dist/whatsapp/providers/meta-api-error');
 const { CapabilityError } = require('../dist/whatsapp/providers/capability-error');
 const { META_CAPABILITIES } = require('../dist/whatsapp/providers/capabilities');
+const { readMetaSession } = require('../dist/whatsapp/providers/meta-credentials.store');
 
-const CREDS = { kind: 'meta', phoneNumberId: '100', accessToken: 'TOK', wabaId: 'W', verifyToken: 'V' };
+const TEST_ENCRYPTION_KEY = 'a'.repeat(64);
+process.env.META_CREDENTIALS_ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
+const CREDS = {
+  kind: 'meta',
+  phoneNumberId: 'PHONE_ID_SECRET',
+  accessToken: 'ACCESS_TOKEN_SECRET',
+  wabaId: 'WABA_ID_SECRET',
+  verifyToken: 'VERIFY_TOKEN_SECRET',
+  appSecret: 'APP_SECRET_SECRET',
+};
 const okGet = { verified_name: 'My Biz', display_phone_number: '+1 555-0100' };
 const okSend = { messages: [{ id: 'wamid.ABC' }] };
+
+function tempProvider(existingDir) {
+  const sessionsDir = existingDir || fs.mkdtempSync(path.join(os.tmpdir(), 'wasphere-meta-'));
+  const provider = new MetaCloudProvider();
+  provider.sessionsDir = sessionsDir;
+  return { provider, sessionsDir };
+}
+
+function removeTemp(dir) {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+async function withEncryptionKey(value, fn) {
+  const previous = process.env.META_CREDENTIALS_ENCRYPTION_KEY;
+  if (value === undefined) delete process.env.META_CREDENTIALS_ENCRYPTION_KEY;
+  else process.env.META_CREDENTIALS_ENCRYPTION_KEY = value;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.META_CREDENTIALS_ENCRYPTION_KEY;
+    else process.env.META_CREDENTIALS_ENCRYPTION_KEY = previous;
+  }
+}
+
+function assertNoSecrets(value, secrets) {
+  const text = String(value);
+  for (const secret of secrets) assert.equal(text.includes(secret), false, `secret leaked: ${secret}`);
+}
 
 function res(ok, status, json) {
   return { ok, status, json: async () => json };
@@ -53,8 +95,8 @@ test('init validates creds via GET and reports connected', async () => {
     assert.equal(p.status('s1'), 'connected');
     const get = s.calls[0];
     assert.equal(get.method, 'GET');
-    assert.match(get.url, /\/v22\.0\/100\?fields=verified_name/);
-    assert.equal(get.headers.Authorization, 'Bearer TOK');
+    assert.match(get.url, /\/v22\.0\/PHONE_ID_SECRET\?fields=verified_name/);
+    assert.equal(get.headers.Authorization, 'Bearer ACCESS_TOKEN_SECRET');
   } finally {
     s.restore();
   }
@@ -82,7 +124,7 @@ test('sendText maps to a text message body', async () => {
     assert.equal(b.type, 'text');
     assert.equal(b.to, '15550100'); // jid suffix stripped
     assert.deepEqual(b.text, { body: 'hi there' });
-    assert.match(lastPost(s).url, /\/v22\.0\/100\/messages$/);
+    assert.match(lastPost(s).url, /\/v22\.0\/PHONE_ID_SECRET\/messages$/);
   });
 });
 
@@ -258,5 +300,122 @@ test('testConnection returns a typed error on failure (never throws)', async () 
     assert.match(r.error, /authentication failed/i);
   } finally {
     s.restore();
+  }
+});
+
+test('new Meta writes an encrypted envelope and reloads its credentials', async () => {
+  const s = stubFetch();
+  const { provider, sessionsDir } = tempProvider();
+  const id = `encrypted-${randomUUID()}`;
+  const file = path.join(sessionsDir, id, 'meta.json');
+  try {
+    await provider.init(id, CREDS, { provider: 'meta' });
+    const raw = fs.readFileSync(file, 'utf8');
+    const envelope = JSON.parse(raw);
+    assert.deepEqual(Object.keys(envelope).sort(), ['authTag', 'ciphertext', 'iv', 'version']);
+    assert.equal(envelope.version, 1);
+    assertNoSecrets(raw, Object.values(CREDS));
+
+    const restored = tempProvider(sessionsDir);
+    restored.provider.onApplicationBootstrap();
+    assert.deepEqual(restored.provider.getCredentials(id), CREDS);
+  } finally {
+    s.restore();
+    removeTemp(sessionsDir);
+  }
+});
+
+test('legacy plaintext meta.json migrates once and stays encrypted', () => {
+  const s = stubFetch();
+  const { provider, sessionsDir } = tempProvider();
+  const id = `migrate-${randomUUID()}`;
+  const file = path.join(sessionsDir, id, 'meta.json');
+  const legacy = JSON.stringify({ creds: CREDS, config: { provider: 'meta' } });
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, legacy, { mode: 0o600 });
+  try {
+    provider.onApplicationBootstrap();
+    const first = fs.readFileSync(file, 'utf8');
+    assert.notEqual(first, legacy);
+    assert.equal(JSON.parse(first).version, 1);
+    assertNoSecrets(first, Object.values(CREDS));
+    assert.deepEqual(provider.getCredentials(id), CREDS);
+
+    const second = readMetaSession(file);
+    assert.deepEqual(second.creds, CREDS);
+    assert.equal(fs.readFileSync(file, 'utf8'), first);
+  } finally {
+    s.restore();
+    removeTemp(sessionsDir);
+  }
+});
+
+test('tampered ciphertext fails closed without replacing the file or logging secrets', async () => {
+  const s = stubFetch();
+  const { provider, sessionsDir } = tempProvider();
+  const id = `tamper-${randomUUID()}`;
+  const file = path.join(sessionsDir, id, 'meta.json');
+  try {
+    await provider.init(id, CREDS);
+    const envelope = JSON.parse(fs.readFileSync(file, 'utf8'));
+    envelope.ciphertext = `${envelope.ciphertext[0] === 'A' ? 'B' : 'A'}${envelope.ciphertext.slice(1)}`;
+    const tampered = JSON.stringify(envelope);
+    fs.writeFileSync(file, tampered, { mode: 0o600 });
+
+    assert.throws(
+      () => readMetaSession(file),
+      (error) => {
+        assert.match(error.message, /invalid or tampered/i);
+        assertNoSecrets(error.message, Object.values(CREDS));
+        return true;
+      },
+    );
+
+    const restored = tempProvider(sessionsDir);
+    const logs = [];
+    restored.provider.logger.warn = (message) => logs.push(String(message));
+    restored.provider.onApplicationBootstrap();
+    assert.equal(restored.provider.has(id), false);
+    assert.equal(fs.readFileSync(file, 'utf8'), tampered);
+    assert.match(logs.join('\n'), /invalid or tampered/i);
+    assertNoSecrets(logs.join('\n'), Object.values(CREDS));
+  } finally {
+    s.restore();
+    removeTemp(sessionsDir);
+  }
+});
+
+test('missing or invalid encryption keys fail closed for create and load', async () => {
+  const { provider, sessionsDir } = tempProvider();
+  const id = `missing-key-${randomUUID()}`;
+  const file = path.join(sessionsDir, id, 'meta.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const legacy = JSON.stringify({ creds: CREDS });
+  fs.writeFileSync(file, legacy, { mode: 0o600 });
+  try {
+    for (const key of [undefined, 'not-hex', 'b'.repeat(63), 'g'.repeat(64)]) {
+      await withEncryptionKey(key, async () => {
+        await assert.rejects(
+          () => provider.init(id, CREDS),
+          (error) => {
+            assert.match(error.message, /META_CREDENTIALS_ENCRYPTION_KEY/);
+            assertNoSecrets(error.message, Object.values(CREDS));
+            if (key) assertNoSecrets(error.message, [key]);
+            return true;
+          },
+        );
+        assert.throws(
+          () => readMetaSession(file),
+          (error) => {
+            assert.match(error.message, /META_CREDENTIALS_ENCRYPTION_KEY/);
+            assertNoSecrets(error.message, Object.values(CREDS));
+            return true;
+          },
+        );
+        assert.equal(fs.readFileSync(file, 'utf8'), legacy);
+      });
+    }
+  } finally {
+    removeTemp(sessionsDir);
   }
 });

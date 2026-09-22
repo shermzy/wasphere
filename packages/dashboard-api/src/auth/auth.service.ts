@@ -86,21 +86,22 @@ export class AuthService implements OnModuleInit {
     user: { id: string; email: string };
     workspace: { id: string; name: string };
   }> {
-    const count = await this.prisma.user.count();
-    if (count > 0) {
-      throw new ForbiddenException('registration_locked');
-    }
-
-    const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-    if (existing) {
-      throw new ConflictException('Email already registered');
-    }
-
     const passwordHash = await argon2.hash(dto.password, argon2Options());
 
     const { user, workspace } = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended('wasphere:first-registration', 0))`);
+
+      if (await tx.user.count() > 0) {
+        throw new ForbiddenException('registration_locked');
+      }
+
+      const existing = await tx.user.findUnique({
+        where: { email: dto.email },
+      });
+      if (existing) {
+        throw new ConflictException('Email already registered');
+      }
+
       const newUser = await tx.user.create({
         data: { email: dto.email, passwordHash },
       });
@@ -138,37 +139,51 @@ export class AuthService implements OnModuleInit {
     user: { id: string; email: string };
     workspace: { id: string; name: string };
   }> {
-    const invite = await this.prisma.workspaceInvite.findUnique({
-      where: { tokenHash: hashInviteToken(dto.token) },
-      select: { id: true, workspaceId: true, role: true, customRoleId: true, acceptedAt: true, expiresAt: true, workspace: { select: { name: true } } },
-    });
-    if (!invite || invite.acceptedAt || invite.expiresAt < new Date()) {
-      throw new BadRequestException('Invite is invalid or has expired');
-    }
+    const now = new Date();
+    const { user, workspace } = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const invite = await tx.workspaceInvite.findFirst({
+        where: {
+          tokenHash: hashInviteToken(dto.token),
+          acceptedAt: null,
+          expiresAt: { gt: now },
+        },
+        select: { id: true, workspaceId: true, role: true, customRoleId: true, workspace: { select: { name: true } } },
+      });
+      if (!invite) {
+        throw new BadRequestException('Invite is invalid or has expired');
+      }
 
-    let user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (user) {
-      const valid = await argon2.verify(user.passwordHash, dto.password);
-      if (!valid) throw new UnauthorizedException('Invalid credentials');
-    } else {
-      const passwordHash = await argon2.hash(dto.password, argon2Options());
-      user = await this.prisma.user.create({ data: { email: dto.email, passwordHash } });
-    }
+      let user = await tx.user.findUnique({ where: { email: dto.email } });
+      if (user) {
+        const valid = await argon2.verify(user.passwordHash, dto.password);
+        if (!valid) throw new UnauthorizedException('Invalid credentials');
+      } else {
+        const passwordHash = await argon2.hash(dto.password, argon2Options());
+        user = await tx.user.create({ data: { email: dto.email, passwordHash } });
+      }
 
-    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.workspaceMember.upsert({
         where: { workspaceId_userId: { workspaceId: invite.workspaceId, userId: user!.id } },
         update: {},
         create: { workspaceId: invite.workspaceId, userId: user!.id, role: invite.role, customRoleId: invite.customRoleId },
       });
-      await tx.workspaceInvite.update({ where: { id: invite.id }, data: { acceptedAt: new Date() } });
+
+      const consumed = await tx.workspaceInvite.updateMany({
+        where: { id: invite.id, acceptedAt: null, expiresAt: { gt: now } },
+        data: { acceptedAt: now },
+      });
+      if (consumed.count !== 1) {
+        throw new BadRequestException('Invite is invalid or has expired');
+      }
+
+      return { user, workspace: { id: invite.workspaceId, name: invite.workspace.name } };
     });
 
     const tokens = await this.issueTokenPair(user.id, user.email);
     return {
       ...tokens,
       user: { id: user.id, email: user.email },
-      workspace: { id: invite.workspaceId, name: invite.workspace.name },
+      workspace,
     };
   }
 
@@ -204,6 +219,7 @@ export class AuthService implements OnModuleInit {
     accessToken: string;
     refreshToken: string;
   }> {
+    const now = new Date();
     const tokenHash = sha256(rawToken);
     const record = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
@@ -218,20 +234,21 @@ export class AuthService implements OnModuleInit {
     if (record.revokedAt !== null) {
       await this.prisma.refreshToken.updateMany({
         where: { userId: record.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
+        data: { revokedAt: now },
       });
       throw new UnauthorizedException('Refresh token reuse detected');
     }
 
-    if (record.expiresAt < new Date()) {
+    if (record.expiresAt <= now) {
       throw new UnauthorizedException('Refresh token expired');
     }
 
     const newTokens = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.refreshToken.update({
-        where: { id: record.id },
-        data: { revokedAt: new Date() },
+      const claimed = await tx.refreshToken.updateMany({
+        where: { id: record.id, revokedAt: null, expiresAt: { gt: now } },
+        data: { revokedAt: now },
       });
+      if (claimed.count !== 1) return null;
 
       const rawRefreshToken = generateRawToken();
       const newHash = sha256(rawRefreshToken);
@@ -248,6 +265,24 @@ export class AuthService implements OnModuleInit {
 
       return { accessToken, refreshToken: rawRefreshToken };
     });
+
+    if (!newTokens) {
+      const current = await this.prisma.refreshToken.findUnique({
+        where: { id: record.id },
+        select: { revokedAt: true, expiresAt: true },
+      });
+      if (current?.revokedAt !== null) {
+        await this.prisma.refreshToken.updateMany({
+          where: { userId: record.userId, revokedAt: null },
+          data: { revokedAt: now },
+        });
+        throw new UnauthorizedException('Refresh token reuse detected');
+      }
+      if (!current || current.expiresAt <= new Date()) {
+        throw new UnauthorizedException('Refresh token expired');
+      }
+      throw new UnauthorizedException('Invalid refresh token');
+    }
 
     return newTokens;
   }
@@ -310,20 +345,25 @@ export class AuthService implements OnModuleInit {
       where: { tokenHash },
     });
 
-    if (!record || record.usedAt !== null || record.expiresAt < new Date()) {
+    if (!record || record.usedAt !== null || record.expiresAt <= new Date()) {
       throw new UnauthorizedException('Invalid or expired reset token');
     }
 
     const passwordHash = await argon2.hash(newPassword, argon2Options());
+    const now = new Date();
 
     await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const consumed = await tx.passwordResetToken.updateMany({
+        where: { id: record.id, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (consumed.count !== 1) {
+        throw new UnauthorizedException('Invalid or expired reset token');
+      }
+
       await tx.user.update({
         where: { id: record.userId },
         data: { passwordHash },
-      });
-      await tx.passwordResetToken.update({
-        where: { id: record.id },
-        data: { usedAt: new Date() },
       });
       await tx.refreshToken.updateMany({
         where: { userId: record.userId, revokedAt: null },

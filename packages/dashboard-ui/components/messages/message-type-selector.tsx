@@ -42,6 +42,7 @@ const INTERACTIVE_TYPES: { type: MessageType; icon: React.ElementType; label: st
 interface MessageTypeSelectorProps {
   value: MessageType
   onChange: (t: MessageType) => void
+  allowedTypes?: ReadonlySet<MessageType>
 }
 
 function TypePill({
@@ -74,11 +75,13 @@ function TypePill({
   )
 }
 
-export function MessageTypeSelector({ value, onChange }: MessageTypeSelectorProps) {
+export function MessageTypeSelector({ value, onChange, allowedTypes }: MessageTypeSelectorProps) {
+  const visibleBasic = BASIC_TYPES.filter(({ type }) => !allowedTypes || allowedTypes.has(type))
+  const visibleInteractive = INTERACTIVE_TYPES.filter(({ type }) => !allowedTypes || allowedTypes.has(type))
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex flex-wrap gap-1.5">
-        {BASIC_TYPES.map(({ type, icon, label }) => (
+        {visibleBasic.map(({ type, icon, label }) => (
           <TypePill
             key={type}
             type={type}
@@ -96,7 +99,7 @@ export function MessageTypeSelector({ value, onChange }: MessageTypeSelectorProp
         <div className="h-px flex-1 bg-border" />
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {INTERACTIVE_TYPES.map(({ type, icon, label }) => (
+        {visibleInteractive.map(({ type, icon, label }) => (
           <TypePill
             key={type}
             type={type}

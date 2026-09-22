@@ -39,6 +39,8 @@ import { MessagesIllustration } from "@/components/empty-states"
 import { StatusDot } from "@/components/ui/status-dot"
 import { normalizePhone } from "@/lib/phone-format"
 import { cn } from "@/lib/utils"
+import { apiErrorMessage } from "@/lib/api-error"
+import { useProviderCapabilities } from "@/lib/use-provider-capabilities"
 
 interface SessionItem {
   id: string
@@ -120,6 +122,25 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
   const [selectedSessionId, setSelectedSessionId] = React.useState<string>(
     connectedSessions[0]?.id ?? sessions[0]?.id ?? ""
   )
+  const capabilityResult = useProviderCapabilities(selectedSessionId)
+  const capabilitiesCurrent = capabilityResult.sessionId === selectedSessionId
+  const capabilityState = capabilitiesCurrent ? capabilityResult.state : "loading"
+  const capabilityError = capabilitiesCurrent ? capabilityResult.error : null
+  const capabilitiesReady = capabilitiesCurrent && capabilityResult.state === "ready" && !!capabilityResult.capabilities
+  const allowedMessageTypes = React.useMemo(() => {
+    const allowed = new Set<MessageType>()
+    if (!capabilitiesReady || !capabilityResult.capabilities) return allowed
+    allowed.add("text"); allowed.add("location"); allowed.add("contact")
+    if (capabilityResult.capabilities.mediaUpload) {
+      allowed.add("image"); allowed.add("video"); allowed.add("audio"); allowed.add("document"); allowed.add("sticker")
+    }
+    if (capabilityResult.provider === "baileys") allowed.add("gif")
+    if (capabilityResult.capabilities.interactiveButtons) { allowed.add("buttons"); allowed.add("list") }
+    if (capabilityResult.capabilities.polls) allowed.add("poll")
+    if (capabilityResult.capabilities.reactions) allowed.add("reaction")
+    if (capabilityResult.capabilities.viewOnce) allowed.add("view-once")
+    return allowed
+  }, [capabilitiesReady, capabilityResult.capabilities, capabilityResult.provider])
   const [activeTab, setActiveTab] = React.useState<"single" | "bulk">("single")
 
   // Recipient state (lifted for compact inline row)
@@ -157,6 +178,11 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
   // Reset preview data when type changes
   React.useEffect(() => { setPreviewData({}) }, [messageType])
 
+  React.useEffect(() => {
+    if (capabilitiesReady && !allowedMessageTypes.has(messageType)) setMessageType("text")
+    if (capabilitiesReady && !capabilityResult.capabilities?.groups && recipientType === "group") setRecipientType("personal")
+  }, [allowedMessageTypes, capabilitiesReady, capabilityResult.capabilities?.groups, messageType, recipientType])
+
   const clearPoller = () => {
     if (intervalRef.current !== null) { clearInterval(intervalRef.current); intervalRef.current = null }
   }
@@ -185,6 +211,10 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
   }, [pollingJobId, pollJob])
 
   const handleFormSubmit = async (body: Record<string, unknown>) => {
+    if (!capabilitiesReady) {
+      toast.error("Provider capabilities are unavailable. Reload them before sending.")
+      return
+    }
     if (!to.trim()) { setToError("Recipient is required."); return }
     setToError("")
     setSubmitting(true)
@@ -206,16 +236,19 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
       setResponseTimestamp(new Date().toISOString())
       setResponseData(data)
       setResponseState(res.ok ? "success" : "error")
+      if (!res.ok) toast.error(apiErrorMessage(data, `Send failed (HTTP ${res.status}).`))
     } catch {
       setResponseState("error")
       setResponseTimestamp(new Date().toISOString())
       setResponseData({ message: "Could not reach WA Server. Check Settings → WA Server configuration." })
       setResponseStatusCode(undefined)
+      toast.error("Could not reach WA Server. Try again.")
     } finally { setSubmitting(false) }
   }
 
   const handleBulkSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!capabilitiesReady) { toast.error("Provider capabilities are unavailable. Reload them before sending."); return }
     const recipientList = recipients.split("\n").map((r) => r.trim()).filter(Boolean)
     const errors: Partial<Record<"recipients" | "text", string>> = {}
     if (recipientList.length === 0) errors.recipients = "At least one recipient is required."
@@ -276,6 +309,17 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
           No connected sessions.{" "}
           <a href="/dashboard/sessions" className="font-medium underline underline-offset-2">Go to Sessions</a>{" "}
           and connect a WhatsApp account.
+        </div>
+      )}
+      {!capabilitiesReady && sessions.length > 0 && (
+        <div
+          role={capabilityState === "error" ? "alert" : "status"}
+          aria-live={capabilityState === "error" ? "assertive" : "polite"}
+          className="rounded-lg border border-amber-400/40 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/10 dark:text-amber-300"
+        >
+          {capabilityState === "error"
+            ? `${capabilityError ?? "Provider capabilities are unavailable."} Sending controls are disabled.`
+            : "Loading provider capabilities… Sending controls are disabled until they are available."}
         </div>
       )}
 
@@ -339,11 +383,12 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
                     To
                   </Label>
                   <div className="flex gap-0.5 p-0.5 bg-muted rounded-md shrink-0">
-                    {(["personal", "group"] as const).map((t) => (
+                    {(["personal", "group"] as const).filter((t) => t !== "group" || (capabilitiesReady && capabilityResult.capabilities?.groups)).map((t) => (
                       <button
                         key={t}
                         type="button"
                         onClick={() => setRecipientType(t)}
+                        disabled={!capabilitiesReady}
                         className={cn(
                           "px-2.5 py-0.5 text-xs font-medium rounded transition-all duration-150 cursor-pointer capitalize",
                           recipientType === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
@@ -365,6 +410,7 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
                       setTo(formatted)
                     }}
                     onBlur={() => { const n = normalizePhone(to); if (n !== to) setTo(n) }}
+                    disabled={!capabilitiesReady}
                     className={cn("flex-1 h-7 text-xs min-w-[120px]", toError && "border-destructive")}
                   />
                 </div>
@@ -392,9 +438,13 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
                   <CardTitle className="text-sm font-semibold text-foreground">Compose</CardTitle>
                 </CardHeader>
                 <CardContent className="p-4 flex flex-col gap-3">
-                  <MessageTypeSelector value={messageType} onChange={(t) => { setMessageType(t); setPreviewData({}) }} />
+                  {capabilitiesReady ? (
+                    <MessageTypeSelector value={messageType} allowedTypes={allowedMessageTypes} onChange={(t) => { setMessageType(t); setPreviewData({}) }} />
+                  ) : null}
                   <div className="border-t border-border/60 pt-3">
-                    {renderForm(messageType, handleFormSubmit, submitting, (text) => setPreviewData((d) => ({ ...d, text })))}
+                    {capabilitiesReady ? renderForm(messageType, handleFormSubmit, submitting, (text) => setPreviewData((d) => ({ ...d, text }))) : (
+                      <p role="status" className="text-sm text-muted-foreground">Select a session with available provider capabilities to compose a message.</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -443,7 +493,7 @@ export function MessagesPanel({ sessions, sessionsError }: MessagesPanelProps) {
                     <p className="text-xs text-muted-foreground">Recommended 2–5 s to avoid rate limits.</p>
                   </div>
 
-                  <Button type="submit" disabled={bulkSubmitting || pollingJobId !== null} className="w-fit">
+                  <Button type="submit" disabled={!capabilitiesReady || bulkSubmitting || pollingJobId !== null} className="w-fit">
                     {bulkSubmitting ? "Starting…" : "Send to All"}
                   </Button>
 

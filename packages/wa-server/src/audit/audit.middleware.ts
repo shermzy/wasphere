@@ -17,6 +17,19 @@ function isAuditable(method: string, statusCode: number): boolean {
   return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || statusCode >= 400;
 }
 
+function auditSessionId(path: string, method: string, req: Request): string | null {
+  const sessionMatch = path.match(/^\/sessions\/([^/]+)/);
+  if (sessionMatch) return sessionMatch[1];
+
+  // Session creation uses POST /sessions with the provider session ID in the
+  // request body. It is only a lookup key; dashboard-api rechecks ownership.
+  if (path === '/sessions' && method === 'POST') {
+    const id = (req.body as { id?: unknown } | undefined)?.id;
+    if (typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id)) return id;
+  }
+  return null;
+}
+
 @Injectable()
 export class AuditMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
@@ -44,9 +57,7 @@ export class AuditMiddleware implements NestMiddleware {
             : undefined
         ) ?? req.ip ?? 'unknown';
 
-        // sessionId from path: /sessions/:sessionId/...
-        const sessionMatch = path.match(/^\/sessions\/([^/]+)/);
-        const sessionId = sessionMatch ? sessionMatch[1] : null;
+        const sessionId = auditSessionId(path, req.method, req);
 
         // requestHash: only for mutating methods with a body
         let requestHash: string | null = null;

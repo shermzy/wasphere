@@ -27,6 +27,7 @@ import type { ApiKey } from "@/components/developer/api-keys-tab"
 
 const PERMISSION_GROUPS = [
   { label: "Messages", perms: ["messages:send", "messages:send_bulk", "messages:read"] },
+  { label: "Contacts", perms: ["contacts:read", "contacts:write"] },
   { label: "Sessions", perms: ["sessions:read", "sessions:write", "sessions:delete"] },
   { label: "Webhooks", perms: ["webhooks:read", "webhooks:write", "webhooks:delete"] },
   { label: "Workspace", perms: ["workspace:read", "workspace:write"] },

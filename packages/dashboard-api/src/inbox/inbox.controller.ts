@@ -20,6 +20,10 @@ import {
 } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
+import { ApiKeyPermissionGuard } from '../auth/api-key-permission.guard';
+import { CapabilityGuard } from '../auth/capability.guard';
+import { RequireCapability } from '../auth/require-capability.decorator';
+import { RequiresPermission } from '../auth/requires-permission.decorator';
 import { InboxService } from './inbox.service';
 import { ListConversationsQueryDto } from './dto/list-conversations-query.dto';
 import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
@@ -34,11 +38,13 @@ interface AuthenticatedRequest extends Request {
 @ApiTags('Inbox')
 @ApiBearerAuth()
 @Controller('workspaces/:workspaceId/conversations')
-@UseGuards(CombinedAuthGuard)
+@UseGuards(CombinedAuthGuard, ApiKeyPermissionGuard, CapabilityGuard)
+@RequireCapability('inbox')
 export class InboxController {
   constructor(private readonly inbox: InboxService) {}
 
   @Get()
+  @RequiresPermission('messages:read')
   @ApiOperation({ summary: 'List conversations (cursor-paginated, filterable, searchable)' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace UUID' })
   @ApiResponse({ status: 200, description: '{ items: ConversationView[], nextCursor: string | null }' })
@@ -52,7 +58,11 @@ export class InboxController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Start a new conversation by sending the first message to a number' })
+  @RequiresPermission('messages:send')
+  @ApiOperation({
+    summary: 'Start a new conversation with text or an approved Meta template',
+    description: 'Text starts require kind=text. Meta starts require kind=template, an approved template name, language code, and bounded body parameters.',
+  })
   @ApiResponse({ status: 201, description: '{ conversationId }' })
   start(
     @Req() req: AuthenticatedRequest,
@@ -63,6 +73,7 @@ export class InboxController {
   }
 
   @Get(':conversationId')
+  @RequiresPermission('messages:read')
   @ApiOperation({ summary: 'Get one conversation with its contact' })
   @ApiResponse({ status: 200, description: 'ConversationView' })
   @ApiResponse({ status: 404, description: 'Conversation not found in this workspace' })
@@ -75,6 +86,7 @@ export class InboxController {
   }
 
   @Get(':conversationId/messages')
+  @RequiresPermission('messages:read')
   @ApiOperation({ summary: 'List messages in a conversation (newest-first, cursor-paginated)' })
   @ApiResponse({ status: 200, description: '{ items: Message[], nextCursor: string | null }' })
   messages(
@@ -87,6 +99,7 @@ export class InboxController {
   }
 
   @Patch(':conversationId')
+  @RequiresPermission('messages:read')
   @ApiOperation({ summary: 'Update conversation status and/or tags' })
   @ApiResponse({ status: 200, description: 'Updated ConversationView' })
   patch(
@@ -99,6 +112,7 @@ export class InboxController {
   }
 
   @Post(':conversationId/read')
+  @RequiresPermission('messages:read')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark a conversation read (zero unreadCount)' })
   @ApiResponse({ status: 200, description: '{ ok: true, unreadCount: 0 }' })
@@ -111,6 +125,7 @@ export class InboxController {
   }
 
   @Post(':conversationId/messages')
+  @RequiresPermission('messages:send')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Send a text reply (proxies to the WA Server)' })
   @ApiResponse({ status: 201, description: 'The created OUTBOUND message' })

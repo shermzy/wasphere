@@ -16,6 +16,9 @@ import { TeamModule } from './team/team.module';
 import { MailModule } from './mail/mail.module';
 import { ProjectsModule } from './projects/projects.module';
 import { McpModule } from './mcp/mcp.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
+import { AutomationsModule } from './automations/automations.module';
+import { AiRepliesModule } from './ai-replies/ai-replies.module';
 
 @Module({
   imports: [
@@ -40,6 +43,9 @@ import { McpModule } from './mcp/mcp.module';
     TeamModule,
     ProjectsModule,
     McpModule,
+    CampaignsModule,
+    AutomationsModule,
+    AiRepliesModule,
   ],
   providers: [
     {

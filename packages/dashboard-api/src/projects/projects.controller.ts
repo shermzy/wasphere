@@ -1,7 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
-import { CombinedAuthGuard } from '../auth/combined-auth.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CapabilityGuard } from '../auth/capability.guard';
+import { RequireCapability } from '../auth/require-capability.decorator';
 import { CreateProjectRouteDto, UpdateProjectRouteDto } from './dto/project-route.dto';
 import { ProjectTargetsQueryDto } from './dto/project-targets-query.dto';
 import { ProjectsService } from './projects.service';
@@ -13,7 +15,8 @@ interface ProjectRequest extends Request {
 @ApiTags('Projects')
 @ApiBearerAuth()
 @Controller('workspaces/:workspaceId')
-@UseGuards(CombinedAuthGuard)
+@UseGuards(JwtAuthGuard, CapabilityGuard)
+@RequireCapability('projects')
 export class ProjectsController {
   constructor(private readonly projects: ProjectsService) {}
 

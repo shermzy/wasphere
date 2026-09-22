@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://github.com/wasphere/wasphere/actions/workflows/ci.yml"><img src="https://github.com/wasphere/wasphere/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <img src="https://img.shields.io/badge/version-1.1.0-10b981.svg" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-1.3.0-10b981.svg" alt="Version"/>
   <img src="https://img.shields.io/badge/license-MIT-10b981.svg" alt="License"/>
   <img src="https://img.shields.io/badge/Node.js-20%2B-brightgreen.svg" alt="Node"/>
   <img src="https://img.shields.io/badge/NestJS-10.x-E0234E.svg" alt="NestJS"/>
@@ -116,6 +116,26 @@ A realtime, two-pane WhatsApp **Inbox** right in your dashboard — send, receiv
 | Built-in API docs    |   ✅   | Interactive Scalar reference on both services             |
 | Workspaces           |   ✅   | Isolated config + data per workspace                      |
 
+### Built-in Pro operator routes
+
+The current dashboard includes these implemented Pro routes in this checkout;
+the upstream licensing context is noted below:
+
+| Route | Behavior |
+| --- | --- |
+| `/dashboard/campaigns` | Durable, database-backed campaigns with per-recipient claims. Delivery is at-most-once and fail-closed: an unknown provider outcome is recorded as indeterminate and is not retried automatically. |
+| `/dashboard/automations` | Keyword rules are disabled by default, bound to one exact provider session ID, and require explicit operator confirmation to enable. Matching is case-insensitive text matching for direct inbound messages. |
+| `/dashboard/crm` + `/dashboard/inbox` | Workspace CRM and Inbox with reserved stage tags: `crm:Lead`, `crm:Qualified`, `crm:Customer`, and `crm:Inactive`. Ordinary contact tags remain separate. |
+| `/dashboard/ai-replies` | Generates an editable draft from one exact workspace-owned conversation. The operator reviews, edits, and sends from Inbox; AI never sends automatically. |
+| `/dashboard/whmcs` | Generates an opt-in WHMCS hook. The selected workspace/session binding is fixed into the generated file, while `WASPHERE_API_KEY` is read at WHMCS runtime and never embedded. |
+
+These routes use the Dashboard API under the selected workspace, including
+`/workspaces/{workspaceId}/campaigns`, `/workspaces/{workspaceId}/automations`,
+`/workspaces/{workspaceId}/ai-replies/status`, and
+`/workspaces/{workspaceId}/ai-replies/draft`. See
+[Configuration](./CONFIGURATION.md) and the [operator runbook](./TOOLS.md) for
+runtime setup and verification.
+
 ### Messaging — 14 send types
 
 Every type below has a dedicated REST endpoint and is fully implemented in the WA Server.
@@ -154,6 +174,16 @@ incoming message and status update.
 | Security headers              |   ✅   | helmet on the API + headers on the UI                          |
 | Audit log                     |   ✅   | every API request logged; filterable; 90-day retention         |
 
+The Pro routes keep the same boundaries: workspace IDs, provider session IDs,
+and other provider identifiers are treated as opaque exact IDs—never fuzzy
+chat-name matches. Workspace ownership is checked on reads and writes, API
+keys carry explicit permission scopes and may be bound to one exact session,
+and campaign/automation actions and runs create audit records. Dashboard
+actions that can send or enable behavior require an operator confirmation.
+Meta credential files are encrypted with the separate
+`META_CREDENTIALS_ENCRYPTION_KEY`. AI Replies are draft-only; there is no
+automatic AI send path.
+
 ### Operations
 
 | Feature              | Status | Notes                                            |
@@ -190,8 +220,18 @@ Then open **http://localhost:3004**, register the first (admin) account, and in 
 | ------------- | -------------------------------- |
 | Dashboard UI  | `http://localhost:3004`          |
 | Dashboard API | `http://localhost:3000`          |
-| WA Server     | `http://localhost:3001`          |
+| WA Server     | `http://127.0.0.1:3001`         |
 | API reference | `…:3001/api/reference` (WhatsApp API) · `…:3000/api/reference` (Admin API) |
+
+The self-hosted Compose file binds the token-protected WA Server API to
+loopback by default. Dashboard containers continue to reach it over the
+internal network at `http://wa-server:3001`. If an operator needs a separate
+TLS/authenticated reverse proxy to reach the host-published port, set
+`WA_SERVER_BIND_ADDRESS` deliberately in `.env` (for example, `0.0.0.0` only
+when host firewall rules prevent direct public access), configure the proxy to
+enforce TLS and authentication, and keep its upstream at the WA Server port.
+Do not expose this API directly to the public network or change the dashboard's
+internal URL.
 
 ### Local development
 
@@ -362,15 +402,19 @@ wasphere/
 | **v1.0** | Foundation — WhatsApp API platform (multi-session, 14 send types, webhooks, scoped API keys, dashboard) | ✅ shipped |
 | **v1.1** | **Inbox** — realtime inbox: send/receive media, polls + decrypted votes, reactions, tags/notes, multi-session ([notes](CHANGELOG.md)) | ✅ shipped |
 | **v1.2** | **Reliability & Trust** — **Meta Cloud API** as an alternative backend (per-session provider choice + Baileys→Meta auto-failover) · inbox polish (streaming media, location/contact-card previews, poll-resolve helper) · browser notifications | 🚧 in progress |
-| **v1.3** | Team & Multi-agent — assign conversations, agent roles, internal notes & @mentions | planned |
-| **v1.5** | Platform — MySQL / SQLite support, multiple workspaces per deployment, basic AI replies | planned |
+| **v1.3** | Team & Multi-agent — Inbox/CRM, roles, built-in Campaigns, Automations, AI Replies draft flow, and WHMCS generator | implemented in this checkout |
+| **v1.5** | Platform — MySQL / SQLite support, multiple workspaces per deployment, and broader platform capabilities | planned |
 | **v2.0** | Mature Core | planned |
 
 > 🎯 **v1.2 makes WaSphere the only MIT-licensed, self-hostable WhatsApp platform that runs *both* Baileys (unofficial) and the official **Meta Cloud API** behind one unified, per-session API.** Intelligent routing, cost optimization and the Shopify/WooCommerce integrations are part of WaSphere Pro.
 
 ### 💼 Commercial products (paid · closed-source · built on the Core)
 
-These run **on top of** WaSphere Core and are developed separately — the Core stays MIT and self-hostable on its own.
+Upstream may also offer products and services on top of WaSphere Core; the
+Core stays MIT and self-hostable. That licensing context does not remove the
+implemented routes listed above from this checkout. The WHMCS feature here is
+the opt-in generator and runtime-key hook, not a claim that a separate hosted
+WHMCS product is open-sourced.
 
 - **WaSphere for Shopify** — WhatsApp order confirmation, abandoned-cart and shipping flows *(after v1.2)*
 - **WaSphere for WooCommerce** *(after Shopify)*
@@ -388,6 +432,7 @@ These run **on top of** WaSphere Core and are developed separately — the Core 
 | [Quick Start](https://wasphere.com/docs/getting-started/quick-start/)      | Deploy + first message in ~10 min |
 | [Installation](https://wasphere.com/docs/getting-started/installation/)    | Every service & port explained    |
 | [Configuration](./CONFIGURATION.md)                                        | Full environment reference        |
+| [Operator tools](./TOOLS.md)                                               | Build, health, and deployment runbook |
 | [WHMCS integration](https://wasphere.com/docs/guides/whmcs-integration/)   | Order/invoice WhatsApp alerts      |
 | [Webhooks](https://wasphere.com/docs/concepts/webhooks/)                   | Real-time events + signatures      |
 

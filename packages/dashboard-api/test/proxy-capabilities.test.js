@@ -18,6 +18,28 @@ test('session deletion, logout, and configuration require full session administr
   assert.deepEqual(proxyCapabilityRequirement('PATCH', 'api/sessions/main/config'), ['sessions']);
 });
 
+test('read, send, and unknown proxy paths are capability-scoped and fail closed', () => {
+  assert.deepEqual(
+    proxyCapabilityRequirement('GET', 'api/sessions/main/messages/text'),
+    ['messages'],
+  );
+  assert.deepEqual(
+    proxyCapabilityRequirement('GET', 'api/sessions'),
+    ['sessions', 'sessions_create', 'inbox', 'messages'],
+  );
+  assert.deepEqual(
+    proxyCapabilityRequirement('POST', 'api/sessions/main/templates'),
+    ['sessions'],
+  );
+  assert.deepEqual(
+    proxyCapabilityRequirement('GET', 'api/sessions/main/capabilities'),
+    ['sessions', 'inbox', 'messages'],
+  );
+  assert.equal(proxyCapabilityRequirement('PUT', 'api/sessions/main/profile'), null);
+  assert.deepEqual(proxyCapabilityRequirement('GET', 'api/bulk/jobs/job-1'), ['messages']);
+  assert.equal(proxyCapabilityRequirement('GET', 'api/not-a-wa-route'), null);
+});
+
 test('a create-only agent passes creation but not administration checks', async () => {
   const prisma = {
     workspaceMember: {

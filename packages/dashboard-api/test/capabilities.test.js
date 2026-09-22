@@ -11,6 +11,7 @@ const {
   isCapability,
   CAPABILITIES,
 } = require('../dist/lib/capabilities');
+const { isValidPermissions } = require('../dist/lib/permissions');
 
 test('owner and admin get every capability regardless of role caps', () => {
   for (const role of ['OWNER', 'ADMIN']) {
@@ -37,6 +38,13 @@ test('a role can grant any capability, including sensitive ones', () => {
   assert.equal(hasCapability('MEMBER', ['api_keys', 'webhooks'], 'api_keys'), true);
   assert.equal(hasCapability('MEMBER', ['api_keys', 'webhooks'], 'webhooks'), true);
   assert.equal(hasCapability('MEMBER', ['api_keys'], 'settings'), false);
+});
+
+test('projects and contact API-key scopes are explicit least-privilege grants', () => {
+  assert.equal(hasCapability('MEMBER', ['projects'], 'projects'), true);
+  assert.equal(hasCapability('MEMBER', ['inbox'], 'projects'), false);
+  assert.equal(isValidPermissions(['contacts:read']), true);
+  assert.equal(isValidPermissions(['contacts:write']), true);
 });
 
 test('a member can be granted session creation without session administration', () => {

@@ -27,8 +27,7 @@ const ingest = new InboxIngestService(prisma, new InboxEventsService());
 
 let wsId;
 
-// Directly await the private handler (the public `ingest()` is fire-and-forget).
-const handle = (dto) => ingest.handle(wsId, dto);
+const handle = (dto) => ingest.ingestAndWait(wsId, dto);
 
 const received = (data) => ({
   event: 'message.received',
@@ -45,6 +44,26 @@ const textMsg = (id, jid, sessionId = 's1') =>
     content: { text: 'hello' },
     message: { key: { remoteJid: jid, id }, pushName: 'Tester' },
   });
+
+const sentMsg = (id, jid, sessionId = 's1') => ({
+  event: 'message.sent',
+  sessionId,
+  timestamp: '2026-01-01T00:00:00Z',
+  data: {
+    messageId: id,
+    to: jid,
+    type: 'conversation',
+    timestamp: 1700000000,
+    content: { text: 'hello' },
+  },
+});
+
+const statusMsg = (id, status, sessionId = 's1') => ({
+  event: 'messages.update',
+  sessionId,
+  timestamp: '2026-01-01T00:00:00Z',
+  data: { key: { id }, update: { status } },
+});
 
 before(async () => {
   await prisma.$connect();
@@ -176,4 +195,38 @@ test('a new inbound message also clears a stale archive flag', async () => {
   await handle(textMsg('rev2', jid, 'revsess'));
   const c = await prisma.conversation.findFirst({ where: { workspaceId: wsId, sessionId: 'revsess' } });
   assert.equal(c.sessionDeletedAt, null);
+});
+
+test('does not regress READ when a late SENT update arrives', async () => {
+  const id = 'status-read-then-sent';
+  await handle(sentMsg(id, '923000000007@s.whatsapp.net'));
+  await handle(statusMsg(id, 4)); // READ
+  await handle(statusMsg(id, 2)); // SENT, out of order
+
+  const m = await prisma.message.findFirst({ where: { workspaceId: wsId, waMessageId: id } });
+  assert.equal(m.status, 'READ');
+});
+
+test('concurrent out-of-order updates leave the highest delivery status', async () => {
+  const id = 'status-concurrent';
+  await handle(sentMsg(id, '923000000008@s.whatsapp.net'));
+  await Promise.all([
+    handle(statusMsg(id, 2)), // SENT
+    handle(statusMsg(id, 4)), // READ
+    handle(statusMsg(id, 3)), // DELIVERED
+    handle(statusMsg(id, 2)), // duplicate late SENT
+  ]);
+
+  const m = await prisma.message.findFirst({ where: { workspaceId: wsId, waMessageId: id } });
+  assert.equal(m.status, 'READ');
+});
+
+test('pending statuses keep their highest rank before the outbound row exists', async () => {
+  const id = 'status-pending';
+  await handle(statusMsg(id, 4)); // READ arrives first
+  await handle(statusMsg(id, 2)); // lower-rank SENT arrives second
+  await handle(sentMsg(id, '923000000009@s.whatsapp.net'));
+
+  const m = await prisma.message.findFirst({ where: { workspaceId: wsId, waMessageId: id } });
+  assert.equal(m.status, 'READ');
 });

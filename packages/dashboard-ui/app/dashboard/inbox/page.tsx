@@ -25,5 +25,11 @@ export default async function InboxPage() {
   )
   const projects = await serverGet<ProjectRoute[]>(`/workspaces/${workspaceId}/projects`, token)
 
-  return <InboxView initialConversations={data?.items ?? []} initialProjects={projects.data ?? []} />
+  return (
+    <InboxView
+      initialConversations={data?.items ?? []}
+      initialNextCursor={data?.nextCursor ?? null}
+      initialProjects={projects.data ?? []}
+    />
+  )
 }

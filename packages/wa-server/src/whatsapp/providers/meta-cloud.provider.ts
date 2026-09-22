@@ -25,6 +25,12 @@ import {
 import { META_CAPABILITIES } from './capabilities';
 import { CapabilityError } from './capability-error';
 import { MetaApiError } from './meta-api-error';
+import {
+  MetaCredentialStorageError,
+  readMetaSession,
+  requireMetaCredentialsEncryptionKey,
+  writeMetaSession,
+} from './meta-credentials.store';
 
 interface MetaSession {
   creds: MetaCredentials;
@@ -75,22 +81,24 @@ export class MetaCloudProvider implements MessageProvider, OnApplicationBootstra
       const file = path.join(this.sessionsDir, id, 'meta.json');
       try {
         if (!fs.existsSync(file) || fs.lstatSync(file).isSymbolicLink()) continue;
-        const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { creds: MetaCredentials; config?: SessionConfig };
-        if (parsed?.creds?.kind !== 'meta') continue;
+        const stored = readMetaSession(file);
         const info: SessionInfo = {
           id,
           status: 'connected',
           retryCount: 0,
           lastDisconnectReason: null,
-          config: { ...(parsed.config as SessionConfig), provider: 'meta' } as SessionConfig,
+          config: { ...(stored.config ?? {}), provider: 'meta' } as SessionConfig,
         };
-        this.sessions.set(id, { creds: parsed.creds, status: 'connected', info });
+        this.sessions.set(id, { creds: stored.creds, status: 'connected', info });
         this.logger.log(`[${id}] Restored Meta session`);
         // Optimistically "connected"; confirm in the background so the session
         // shows its phone number/name and we detect a dead token after restart.
         void this.revalidateRestored(id);
       } catch (err) {
-        this.logger.warn(`[${id}] Failed to restore Meta session: ${err instanceof Error ? err.message : err}`);
+        const diagnostic = err instanceof MetaCredentialStorageError
+          ? err.message
+          : 'Meta session could not be restored';
+        this.logger.warn(`[${id}] ${diagnostic}`);
       }
     }
   }
@@ -110,23 +118,15 @@ export class MetaCloudProvider implements MessageProvider, OnApplicationBootstra
         session.status = 'failed';
         session.info.status = 'failed';
         session.info.lastDisconnectReason = err.message;
-        this.logger.warn(`[${sessionId}] Restored Meta token is no longer valid: ${err.message}`);
+        this.logger.warn(`[${sessionId}] Restored Meta token is no longer valid`);
       } else {
-        this.logger.warn(`[${sessionId}] Could not re-validate restored Meta session (kept connected): ${err instanceof Error ? err.message : err}`);
+        this.logger.warn(`[${sessionId}] Could not re-validate restored Meta session (kept connected)`);
       }
     }
   }
 
   private persist(sessionId: string, creds: MetaCredentials, config: SessionConfig): void {
-    try {
-      const dir = path.join(this.sessionsDir, sessionId);
-      fs.mkdirSync(dir, { recursive: true });
-      const tmp = path.join(dir, 'meta.json.tmp');
-      fs.writeFileSync(tmp, JSON.stringify({ creds, config }), 'utf8');
-      fs.renameSync(tmp, path.join(dir, 'meta.json'));
-    } catch (err) {
-      this.logger.warn(`[${sessionId}] Failed to persist Meta creds: ${err instanceof Error ? err.message : err}`);
-    }
+    writeMetaSession(path.join(this.sessionsDir, sessionId, 'meta.json'), { creds, config });
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────────
@@ -139,6 +139,7 @@ export class MetaCloudProvider implements MessageProvider, OnApplicationBootstra
     if (creds.kind !== 'meta') {
       throw new MetaApiError('META_API_ERROR', 'MetaCloudProvider requires Meta credentials');
     }
+    requireMetaCredentialsEncryptionKey();
 
     let status: SessionStatus = 'connecting';
     let name: string | undefined;
@@ -153,7 +154,7 @@ export class MetaCloudProvider implements MessageProvider, OnApplicationBootstra
     } catch (err) {
       status = 'failed';
       lastDisconnectReason = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`[${sessionId}] Meta credential validation failed: ${lastDisconnectReason}`);
+      this.logger.warn(`[${sessionId}] Meta credential validation failed`);
     }
 
     const info: SessionInfo = {
@@ -167,8 +168,8 @@ export class MetaCloudProvider implements MessageProvider, OnApplicationBootstra
       config: { ...(cfg as SessionConfig), provider: 'meta' } as SessionConfig,
     };
 
-    this.sessions.set(sessionId, { creds, status, info });
     if (status === 'connected') this.persist(sessionId, creds, info.config);
+    this.sessions.set(sessionId, { creds, status, info });
     return info;
   }
 
@@ -242,8 +243,8 @@ export class MetaCloudProvider implements MessageProvider, OnApplicationBootstra
         return null;
       }
       return `data:${meta.mime_type || 'application/octet-stream'};base64,${buf.toString('base64')}`;
-    } catch (err) {
-      this.logger.warn(`[${sessionId}] Meta media download failed: ${err instanceof Error ? err.message : err}`);
+    } catch {
+      this.logger.warn(`[${sessionId}] Meta media download failed`);
       return null;
     }
   }

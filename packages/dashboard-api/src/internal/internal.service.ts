@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
@@ -30,8 +30,19 @@ export class InternalService {
   ) {}
 
   async ingestAudit(dto: AuditEventDto): Promise<void> {
+    if (!dto.sessionId) {
+      throw new NotFoundException('Session is not assigned to a workspace');
+    }
+    const session = await this.prisma.workspaceSession.findUnique({
+      where: { providerSessionId: dto.sessionId },
+      select: { workspaceId: true },
+    });
+    if (!session) {
+      throw new NotFoundException('Session is not assigned to a workspace');
+    }
     await this.prisma.auditLog.create({
       data: {
+        workspaceId: session.workspaceId,
         sessionId: dto.sessionId,
         actorTokenPrefix: dto.actorTokenPrefix,
         method: dto.method,
@@ -43,15 +54,10 @@ export class InternalService {
     });
   }
 
-  // Returns immediately — fanout runs in the background.
   // The controller resolves the exact provider session to its owning workspace
   // before fan-out reaches this service.
-  fanoutWebhookEvent(workspaceId: string, dto: WebhookEventDto): void {
-    this.runFanout(workspaceId, dto).catch((err: unknown) => {
-      this.logger.error(
-        `[Fanout] Unexpected top-level error for workspace ${workspaceId}: ${String(err)}`,
-      );
-    });
+  async fanoutWebhookEvent(workspaceId: string, dto: WebhookEventDto): Promise<void> {
+    await this.runFanout(workspaceId, dto);
   }
 
   private async runFanout(workspaceId: string, dto: WebhookEventDto): Promise<void> {
@@ -66,9 +72,12 @@ export class InternalService {
 
     if (matching.length === 0) return;
 
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       matching.map((wh) => this.deliverWithRetry(workspaceId, wh, dto, 1)),
     );
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+    }
   }
 
   /**

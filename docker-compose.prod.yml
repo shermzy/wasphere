@@ -44,6 +44,10 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # AI reply drafting is opt-in; an incomplete configuration stays disabled.
+      AI_REPLY_BASE_URL: ${AI_REPLY_BASE_URL:-}
+      AI_REPLY_API_KEY: ${AI_REPLY_API_KEY:-}
+      AI_REPLY_MODEL: ${AI_REPLY_MODEL:-}
       NODE_ENV: production
     depends_on:
       postgres:
@@ -52,7 +56,7 @@ services:
       - internal
       - dokploy-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -85,6 +89,7 @@ services:
       DASHBOARD_WEBHOOK_URL: ${DASHBOARD_WEBHOOK_URL:-}
       # Meta WhatsApp Cloud API provider (opt-in). Ships DISABLED.
       META_PROVIDER_ENABLED: ${META_PROVIDER_ENABLED:-false}
+      META_CREDENTIALS_ENCRYPTION_KEY: ${META_CREDENTIALS_ENCRYPTION_KEY:-}
       GRAPH_VERSION: ${GRAPH_VERSION:-v22.0}
       NODE_ENV: production
     volumes:

@@ -5,13 +5,11 @@ import Link from "next/link"
 import { toast } from "sonner"
 import {
   Globe, KeyRound, Eye, EyeOff, Building2, CheckCircle2,
-  Server, ShieldCheck, Bell, Lock, AlertTriangle, Copy,
-  Check, ExternalLink, RotateCcw, Plug, XCircle, Loader2,
+  Server, ShieldCheck, Copy, Check, ExternalLink, Plug, XCircle, Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export interface Workspace {
@@ -87,12 +85,6 @@ export function SettingsForm({ workspace, suggestedWaServerUrl = "http://localho
     setTimeout(() => setWsCopied(false), 2000)
   }
 
-  // Token rotation state
-  const [rotateLoading, setRotateLoading] = React.useState(false)
-  const [rotatedKey, setRotatedKey] = React.useState<string | null>(null)
-  const [rotateCopied, setRotateCopied] = React.useState(false)
-  const [rotateError, setRotateError] = React.useState<string | null>(null)
-
   const handleConfigSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setConfigError(null)
@@ -137,35 +129,6 @@ export function SettingsForm({ workspace, suggestedWaServerUrl = "http://localho
     } finally {
       setNameSubmitting(false)
     }
-  }
-
-  const handleRotate = async () => {
-    setRotateLoading(true)
-    setRotateError(null)
-    setRotatedKey(null)
-    try {
-      const keysRes = await fetch("/api/developer/api-keys")
-      if (!keysRes.ok) { setRotateError("Could not load API keys."); return }
-      const keys = await keysRes.json()
-      const primaryKey = Array.isArray(keys) ? keys[0] : null
-      if (!primaryKey?.id) { setRotateError("No API key found."); return }
-      const rotateRes = await fetch(`/api/developer/api-keys/${primaryKey.id}/rotate`, { method: "POST" })
-      const data = await rotateRes.json().catch(() => ({}))
-      if (!rotateRes.ok) { setRotateError(data.message ?? "Rotation failed."); return }
-      setRotatedKey(data.key ?? data.plaintext ?? null)
-      toast.success("API key rotated.")
-    } catch {
-      setRotateError("Could not reach the server.")
-    } finally {
-      setRotateLoading(false)
-    }
-  }
-
-  const copyRotated = async () => {
-    if (!rotatedKey) return
-    await navigator.clipboard.writeText(rotatedKey).catch(() => null)
-    setRotateCopied(true)
-    setTimeout(() => setRotateCopied(false), 2000)
   }
 
   return (
@@ -241,7 +204,7 @@ export function SettingsForm({ workspace, suggestedWaServerUrl = "http://localho
               <p className="text-xs text-zinc-400 font-light">Stored encrypted at rest. Never exposed in responses.</p>
             </div>
 
-            {configError && <p className="text-xs text-destructive sm:col-span-2">{configError}</p>}
+            {configError && <p className="text-xs text-destructive sm:col-span-2" role="alert" aria-live="assertive">{configError}</p>}
 
             {testResult && (
               <div
@@ -254,7 +217,7 @@ export function SettingsForm({ workspace, suggestedWaServerUrl = "http://localho
                 {testResult.ok
                   ? <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
                   : <XCircle size={14} className="mt-0.5 shrink-0" />}
-                <span>{testResult.message}</span>
+                <span role="status" aria-live="polite">{testResult.message}</span>
               </div>
             )}
 
@@ -311,7 +274,7 @@ export function SettingsForm({ workspace, suggestedWaServerUrl = "http://localho
                   className="placeholder:text-zinc-400 placeholder:font-light"
                 />
               </div>
-              {nameError && <p className="text-xs text-destructive">{nameError}</p>}
+              {nameError && <p className="text-xs text-destructive" role="alert" aria-live="assertive">{nameError}</p>}
               <div>
                 <Button type="submit" disabled={nameSubmitting} size="sm">
                   {nameSubmitting ? "Saving…" : "Save Name"}
@@ -362,33 +325,20 @@ export function SettingsForm({ workspace, suggestedWaServerUrl = "http://localho
           </CardHeader>
           <CardContent className="bg-background/60 rounded-b-xl pt-4 border-t border-primary/10 flex flex-col gap-5">
 
-            {/* Token rotation */}
+            {/* Dashboard API keys */}
             <div className="flex flex-col gap-2">
               <div>
-                <p className="text-sm font-medium text-foreground">Rotate API Token</p>
+                <p className="text-sm font-medium text-foreground">Dashboard API keys</p>
                 <p className="text-xs text-zinc-400 font-light mt-0.5">
-                  Generates a new token and immediately invalidates the old one.
+                  Manage keys for Dashboard/Admin API integrations. These are separate from the WA Server API token (<code>WA_TOKEN</code>) configured above.
                 </p>
               </div>
-              <Button size="sm" variant="outline" onClick={handleRotate} disabled={rotateLoading} className="w-fit gap-1.5">
-                <RotateCcw size={13} className={rotateLoading ? "animate-spin" : ""} />
-                {rotateLoading ? "Rotating…" : "Rotate Token"}
-              </Button>
-              {rotateError && <p className="text-xs text-destructive">{rotateError}</p>}
-              {rotatedKey && (
-                <div className="flex flex-col gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3">
-                  <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-                    <AlertTriangle size={12} />
-                    Save this token — it won&apos;t be shown again.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Input value={rotatedKey} readOnly className="font-mono text-xs" aria-label="New API token" />
-                    <Button variant="outline" size="icon" onClick={copyRotated} className="shrink-0" aria-label={rotateCopied ? "Copied" : "Copy"}>
-                      {rotateCopied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
-                    </Button>
-                  </div>
-                </div>
-              )}
+              <Link
+                href="/dashboard/developer?tab=api-keys"
+                className="inline-flex w-fit items-center gap-1.5 text-sm font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                Open API key management <ExternalLink size={12} />
+              </Link>
             </div>
 
             {/* Audit log link */}
@@ -408,40 +358,6 @@ export function SettingsForm({ workspace, suggestedWaServerUrl = "http://localho
           </CardContent>
         </Card>
       </div>
-
-      {/* ── Row 3: Notifications (full width, locked) ── */}
-      <Card className="border-primary/20 opacity-70">
-        <CardHeader className="pb-4">
-          <div className="flex items-center gap-3">
-            <SectionIcon icon={Bell} />
-            <div>
-              <CardTitle className="text-base font-semibold text-foreground">Notifications</CardTitle>
-              <CardDescription className="text-xs text-zinc-400 font-light mt-0.5">
-                Available in WaSphere Pro — coming soon
-              </CardDescription>
-            </div>
-            <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-500 shrink-0">
-              <Lock size={10} /> Pro
-            </span>
-          </div>
-        </CardHeader>
-        <CardContent className="bg-background/60 rounded-b-xl pt-4 border-t border-primary/10">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {[
-              { label: "Email alert on session disconnect", desc: "Get notified when a WhatsApp session drops." },
-              { label: "SMS alerts", desc: "Critical alerts sent to your phone number." },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 px-4 py-3 opacity-60 cursor-not-allowed">
-                <div>
-                  <p className="text-sm font-medium text-foreground">{item.label}</p>
-                  <p className="text-xs text-zinc-400 font-light">{item.desc}</p>
-                </div>
-                <Switch disabled checked={false} />
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
 
     </div>
   )

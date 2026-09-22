@@ -14,9 +14,23 @@ import { UpdateWebhookDto } from './dto/update-webhook.dto';
 const PROD_URL_RE = /^https:\/\//i;
 const IS_PROD = process.env.NODE_ENV === 'production';
 const AUTO_DEACTIVATE_THRESHOLD = 50;
+const CONTROL_CHAR_RE = /\p{Cc}/u;
 
 function generateSigningSecret(): string {
   return randomBytes(32).toString('hex'); // 64 hex chars
+}
+
+function normalizeSigningSecret(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (CONTROL_CHAR_RE.test(value)) {
+    throw new BadRequestException('Signing secret must not contain control characters');
+  }
+
+  const secret = value.trim();
+  if (secret.length < 32 || secret.length > 256) {
+    throw new BadRequestException('Signing secret must be between 32 and 256 characters after trimming');
+  }
+  return secret;
 }
 
 function computeSignature(secret: string, timestamp: number, rawBody: string): string {
@@ -82,7 +96,7 @@ export class WebhooksService {
       );
     }
 
-    const signingSecret = generateSigningSecret();
+    const signingSecret = normalizeSigningSecret(dto.signingSecret) ?? generateSigningSecret();
 
     const wh = await this.prisma.webhook.create({
       data: {
@@ -98,7 +112,7 @@ export class WebhooksService {
     });
 
     await this.prisma.auditLog.create({
-      data: { method: 'POST', endpoint: 'webhook.created' },
+      data: { workspaceId, method: 'POST', endpoint: 'webhook.created' },
     });
 
     return wh; // signingSecret shown once on creation
@@ -115,6 +129,11 @@ export class WebhooksService {
       );
     }
 
+    const signingSecret = normalizeSigningSecret(dto.signingSecret);
+    const select = signingSecret === undefined
+      ? LIST_SELECT
+      : { ...LIST_SELECT, signingSecret: true } as const;
+
     const updated = await this.prisma.webhook.update({
       where: { id: webhookId },
       data: {
@@ -123,10 +142,11 @@ export class WebhooksService {
         ...(dto.events !== undefined && { events: dto.events }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         ...(dto.retryMax !== undefined && { retryMax: dto.retryMax }),
+        ...(signingSecret !== undefined && { signingSecret }),
         // Re-activate clears the failure counter
         ...(dto.isActive === true && { failureCount: 0 }),
       },
-      select: LIST_SELECT,
+      select,
     });
 
     return updated;
@@ -137,7 +157,7 @@ export class WebhooksService {
     await this.findOwned(workspaceId, webhookId);
     await this.prisma.webhook.delete({ where: { id: webhookId } });
     await this.prisma.auditLog.create({
-      data: { method: 'DELETE', endpoint: 'webhook.deleted' },
+      data: { workspaceId, method: 'DELETE', endpoint: 'webhook.deleted' },
     });
     return { success: true };
   }
@@ -168,7 +188,7 @@ export class WebhooksService {
     const { statusCode, success, error } = result;
 
     await this.prisma.auditLog.create({
-      data: { method: 'POST', endpoint: 'webhook.test_fire', statusCode: statusCode ?? undefined },
+      data: { workspaceId, method: 'POST', endpoint: 'webhook.test_fire', statusCode: statusCode ?? undefined },
     });
 
     return { success, statusCode, error };

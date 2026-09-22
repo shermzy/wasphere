@@ -7,8 +7,7 @@ import {
 
 export class AuditEventDto {
   @IsString()
-  @IsOptional()
-  sessionId?: string;
+  sessionId!: string;
 
   @IsString()
   @IsOptional()

@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Check, CheckCheck, ChevronDown, FileText, ImageIcon, MapPin, BarChart3, MoreVertical, MoreHorizontal, SmilePlus, Download, Forward, Copy, Maximize2, Plus, Contact as ContactIcon } from "lucide-react"
+import Link from "next/link"
+import { Check, CheckCheck, ChevronDown, FileText, ImageIcon, MapPin, BarChart3, MoreVertical, MoreHorizontal, SmilePlus, Download, Forward, Copy, Maximize2, Plus, Contact as ContactIcon, WandSparkles } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,10 +25,10 @@ function contactInitials(name: string): string {
 }
 
 function Ticks({ status }: { status: InboxMessage["status"] }) {
-  if (status === "READ") return <CheckCheck className="size-3.5 text-sky-400" />
-  if (status === "DELIVERED") return <CheckCheck className="size-3.5 opacity-70" />
-  if (status === "FAILED") return <span className="text-[10px] text-destructive">failed</span>
-  return <Check className="size-3.5 opacity-70" />
+  if (status === "READ") return <span aria-label="Read" role="img"><CheckCheck className="size-3.5 text-sky-400" /></span>
+  if (status === "DELIVERED") return <span aria-label="Delivered" role="img"><CheckCheck className="size-3.5 opacity-70" /></span>
+  if (status === "FAILED") return <span aria-label="Delivery failed" className="text-[10px] text-destructive">failed</span>
+  return <span aria-label={status === "PENDING" ? "Sending" : "Sent"} role="img"><Check className="size-3.5 opacity-70" /></span>
 }
 
 // Tap an image to open a lightbox with a Download button.
@@ -59,24 +60,36 @@ function ImageView({ src, alt }: { src: string; alt: string }) {
 }
 
 // Inline video player + a "full view" lightbox (big player + download).
-function VideoView({ src }: { src: string }) {
+function VideoView({ src, description }: { src: string; description?: string }) {
   const [open, setOpen] = React.useState(false)
   return (
     <div className="relative w-fit">
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <video src={src} controls className="max-h-72 max-w-full rounded-md" />
+      <video src={src} controls aria-label={description ? `Video message: ${description}` : "Video message"} className="max-h-72 max-w-full rounded-md" />
       <button
         type="button"
         onClick={() => setOpen(true)}
         title="Full view"
+        aria-label="Open video in full view"
         className="absolute right-1.5 top-1.5 rounded-full bg-black/50 p-1 text-white transition hover:bg-black/70"
       >
         <Maximize2 className="size-3.5" />
       </button>
+      {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
+      <a
+        href={src}
+        target="_blank"
+        rel="noopener noreferrer"
+        download="wasphere-video.mp4"
+        aria-label="Open or download video message"
+        className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+      >
+        <Download className="size-3.5" /> Open/download video
+      </a>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent showCloseButton className="max-w-4xl gap-2">
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <video src={src} controls autoPlay className="max-h-[78vh] w-full rounded" />
+          <video src={src} controls autoPlay aria-label={description ? `Video message: ${description}` : "Video message"} className="max-h-[78vh] w-full rounded" />
           <div className="flex justify-end">
             <a
               href={src}
@@ -94,7 +107,10 @@ function VideoView({ src }: { src: string }) {
 
 function MediaBlock({ m, onStartChat }: { m: InboxMessage; onStartChat?: (phone: string) => void }) {
   const p = (m.payload ?? {}) as Record<string, unknown>
-  const cap = (p.caption as string) || m.body
+  const payloadCaption = typeof p.caption === "string" ? p.caption.trim() : ""
+  const payloadTranscript = typeof p.transcript === "string" ? p.transcript.trim() : ""
+  const mediaDescription = [payloadCaption, payloadTranscript].filter(Boolean).join(" — ")
+  const cap = payloadCaption || (m.type === "audio" || m.type === "video" ? "" : m.body)
 
   // Inbound messages WhatsApp couldn't decrypt (LID / unsupported) arrive empty.
   if (m.type === "unknown") {
@@ -188,10 +204,23 @@ function MediaBlock({ m, onStartChat }: { m: InboxMessage; onStartChat?: (phone:
       {isImage ? (
         <ImageView src={src!} alt={fileName || cap || "image"} />
       ) : isVideo ? (
-        <VideoView src={src!} />
+        <VideoView src={src!} description={mediaDescription || undefined} />
       ) : isAudio ? (
-        // eslint-disable-next-line jsx-a11y/media-has-caption
-        <audio src={src!} controls className="w-56 max-w-full" />
+        <div className="flex flex-col gap-1.5">
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio src={src!} controls aria-label={mediaDescription ? `Audio message: ${mediaDescription}` : "Audio message"} className="w-56 max-w-full" />
+          {mediaDescription && <p className="text-xs text-muted-foreground">{mediaDescription}</p>}
+          <a
+            href={src!}
+            target="_blank"
+            rel="noopener noreferrer"
+            download="wasphere-audio"
+            aria-label="Open or download audio message"
+            className="inline-flex w-fit items-center gap-1.5 rounded-md border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+          >
+            <Download className="size-3.5" /> Open/download audio
+          </a>
+        </div>
       ) : isDoc ? (
         <a
           href={src!}
@@ -249,7 +278,7 @@ function ReactButton({ m, onReact }: { m: InboxMessage; onReact: (m: InboxMessag
   return (
     <DropdownMenu onOpenChange={(o) => !o && setShowAll(false)}>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon" className="size-7 shrink-0 opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100" />}
+        render={<Button variant="ghost" size="icon" aria-label="Add reaction" className="size-7 shrink-0 opacity-100 transition focus-visible:opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100" />}
       >
         <SmilePlus className="size-4 text-muted-foreground" />
       </DropdownMenuTrigger>
@@ -260,6 +289,7 @@ function ReactButton({ m, onReact }: { m: InboxMessage; onReact: (m: InboxMessag
               <button
                 key={`${e}-${i}`}
                 onClick={() => onReact(m, e)}
+                aria-label={`React ${e}`}
                 className="rounded-md p-1 text-xl leading-none transition-transform hover:scale-125 hover:bg-muted"
                 type="button"
               >
@@ -274,6 +304,7 @@ function ReactButton({ m, onReact }: { m: InboxMessage; onReact: (m: InboxMessag
             <button
               key={e}
               onClick={() => onReact(m, e)}
+              aria-label={`React ${e}`}
               className="rounded-full p-1.5 text-xl leading-none transition-transform hover:scale-125 hover:bg-muted"
               type="button"
             >
@@ -285,6 +316,7 @@ function ReactButton({ m, onReact }: { m: InboxMessage; onReact: (m: InboxMessag
             className="ml-0.5 rounded-full bg-muted p-1.5 text-muted-foreground transition hover:bg-muted-foreground/20"
             type="button"
             title="More emojis"
+            aria-label="Choose more emojis"
           >
             <Plus className="size-4" />
           </button>
@@ -299,7 +331,7 @@ function MsgMenu({ m, onForward }: { m: InboxMessage; onForward: (m: InboxMessag
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon" className="size-7 shrink-0 opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100" />}
+        render={<Button variant="ghost" size="icon" aria-label="Message actions" className="size-7 shrink-0 opacity-100 transition focus-visible:opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100" />}
       >
         <MoreHorizontal className="size-4 text-muted-foreground" />
       </DropdownMenuTrigger>
@@ -348,7 +380,7 @@ function Bubble({
         ) : (
           <MediaBlock m={m} onStartChat={onStartChat} />
         )}
-        <div className={cn("mt-1 flex items-center justify-end gap-1 text-[10px]", m.fromMe ? "text-primary-foreground/70" : "text-muted-foreground")}>
+        <div aria-live={m.fromMe ? "polite" : undefined} className={cn("mt-1 flex items-center justify-end gap-1 text-[10px]", m.fromMe ? "text-primary-foreground/70" : "text-muted-foreground")}>
           <span>{clockTime(m.waTimestamp)}</span>
           {m.fromMe ? <Ticks status={m.status} /> : null}
         </div>
@@ -363,6 +395,10 @@ export function ThreadView({
   conversation,
   messages,
   loading,
+  loadingMore,
+  hasMore,
+  error,
+  onLoadMore,
   onResolveToggle,
   onReact,
   onForward,
@@ -373,6 +409,10 @@ export function ThreadView({
   conversation: Conversation
   messages: InboxMessage[]
   loading: boolean
+  loadingMore?: boolean
+  hasMore?: boolean
+  error?: string | null
+  onLoadMore?: () => void
   onResolveToggle: () => void
   onReact?: (m: InboxMessage, emoji: string) => void
   onForward?: (m: InboxMessage) => void
@@ -383,10 +423,9 @@ export function ThreadView({
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const [atBottom, setAtBottom] = React.useState(true)
 
-  // newest-last for display (API returns newest-first). Hide undecryptable
-  // placeholders ("unknown") — they're transient noise that decode on retry.
+  // newest-last for display (API returns newest-first).
   const ordered = React.useMemo(
-    () => [...messages].reverse().filter((m) => m.type !== "unknown"),
+    () => [...messages].reverse(),
     [messages],
   )
 
@@ -430,10 +469,13 @@ export function ThreadView({
           {conversation.status === "RESOLVED" && <Badge variant="secondary" className="text-[10px]">Resolved</Badge>}
         </div>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-8" />}>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Conversation actions" className="size-8" />}>
             <MoreVertical className="size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem render={<Link href={"/dashboard/ai-replies?conversationId=" + encodeURIComponent(conversation.id)} />}>
+              <WandSparkles /> Draft AI reply
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={onResolveToggle}>
               {conversation.status === "RESOLVED" ? "Reopen" : "Mark resolved"}
             </DropdownMenuItem>
@@ -443,6 +485,15 @@ export function ThreadView({
 
       {/* messages */}
       <div ref={scrollRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {hasMore && onLoadMore && (
+          <div className="mb-3 flex flex-col items-center gap-1">
+            <Button type="button" variant="outline" size="sm" onClick={onLoadMore} disabled={loadingMore}>
+              {loadingMore ? "Loading…" : "Load older messages"}
+            </Button>
+            {error && <p role="alert" className="text-xs text-destructive">{error} Try again.</p>}
+          </div>
+        )}
+        {!hasMore && error && <p role="alert" className="mb-3 text-center text-xs text-destructive">{error}</p>}
         {loading ? (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -472,6 +523,7 @@ export function ThreadView({
             variant="secondary"
             className="absolute bottom-3 right-4 size-9 rounded-full shadow"
             onClick={() => { setAtBottom(true) }}
+            aria-label="Jump to latest message"
           >
             <ChevronDown className="size-4" />
           </Button>

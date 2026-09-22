@@ -90,6 +90,9 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
   private readonly sessionsDir = './sessions';
   private readonly MAX_RETRIES = 5;
   private readonly RETRY_DELAY_MS = 5000;
+  private lifecycleQueue = Promise.resolve();
+  private readonly reconnects = new Map<string, { timer?: NodeJS.Timeout; cancelled: boolean }>();
+  private readonly sessionGenerations = new Map<string, number>();
 
   // Per session: Map<messageId, proto.IWebMessageInfo>
   // Eviction: when size reaches 100, delete the oldest inserted key before inserting the new one.
@@ -237,9 +240,57 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     return new HttpsProxyAgent(proxyUrl) as unknown as https.Agent;
   }
 
+  private withLifecycleLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.lifecycleQueue;
+    let release!: () => void;
+    this.lifecycleQueue = new Promise<void>((resolve) => { release = resolve; });
+    return previous.then(operation).finally(() => release());
+  }
+
+  private nextSessionGeneration(sessionId: string): number {
+    const generation = (this.sessionGenerations.get(sessionId) ?? 0) + 1;
+    this.sessionGenerations.set(sessionId, generation);
+    return generation;
+  }
+
+  private isCurrentSession(sessionId: string, generation?: number): boolean {
+    return generation === undefined || this.sessionGenerations.get(sessionId) === generation;
+  }
+
+  private cancelReconnect(sessionId: string): void {
+    const reconnect = this.reconnects.get(sessionId);
+    if (!reconnect) return;
+    reconnect.cancelled = true;
+    if (reconnect.timer) clearTimeout(reconnect.timer);
+    this.reconnects.delete(sessionId);
+  }
+
+  private scheduleReconnect(sessionId: string, proxy: string | undefined, generation: number, delay: number): void {
+    this.cancelReconnect(sessionId);
+    const reconnect = { cancelled: false as boolean, timer: undefined as NodeJS.Timeout | undefined };
+    this.reconnects.set(sessionId, reconnect);
+    reconnect.timer = setTimeout(() => {
+      this.withLifecycleLock(async () => {
+        if (
+          reconnect.cancelled
+          || this.reconnects.get(sessionId) !== reconnect
+          || !this.isCurrentSession(sessionId, generation)
+          || !this.sessionInfo.has(sessionId)
+        ) return;
+        this.reconnects.delete(sessionId);
+        this.sessions.delete(sessionId);
+        await this.initSocket(sessionId, proxy, undefined, generation);
+      }).catch((err) => console.error(`[${sessionId}] Reconnect failed: ${err.message}`));
+    }, delay);
+  }
+
   // ─── Session lifecycle ──────────────────────────────────────────────────
 
   async createSession(sessionId: string, proxy?: string, config?: Partial<SessionConfig>): Promise<SessionInfo> {
+    return this.withLifecycleLock(() => this.createSessionLocked(sessionId, proxy, config));
+  }
+
+  private async createSessionLocked(sessionId: string, proxy?: string, config?: Partial<SessionConfig>): Promise<SessionInfo> {
     // Idempotency first — existing session short-circuits before any network I/O.
     if (this.sessionInfo.has(sessionId)) {
       return this.getSessionInfo(sessionId);
@@ -265,6 +316,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     }
 
     const initialConfig: SessionConfig = { ...SESSION_CONFIG_DEFAULTS, ...config };
+    const generation = this.nextSessionGeneration(sessionId);
 
     this.sessionInfo.set(sessionId, {
       id: sessionId,
@@ -275,7 +327,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       config: initialConfig,
     });
 
-    await this.initSocket(sessionId, proxy, config);
+    await this.initSocket(sessionId, proxy, config, generation);
     return this.getSessionInfo(sessionId);
   }
 
@@ -301,6 +353,12 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    return this.withLifecycleLock(() => this.deleteSessionLocked(sessionId));
+  }
+
+  private async deleteSessionLocked(sessionId: string): Promise<void> {
+    this.cancelReconnect(sessionId);
+    this.nextSessionGeneration(sessionId);
     if (!this.sessionInfo.has(sessionId)) {
       throw new NotFoundException(`Session ${sessionId} not found`);
     }
@@ -334,10 +392,65 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
   }
 
   async logoutSession(sessionId: string): Promise<void> {
+    return this.withLifecycleLock(() => this.logoutSessionLocked(sessionId));
+  }
+
+  private async logoutSessionLocked(sessionId: string): Promise<void> {
+    this.cancelReconnect(sessionId);
     const sock = this.sessions.get(sessionId);
     if (sock) {
       await sock.logout();
+    } else if (this.sessionInfo.has(sessionId)) {
+      this.nextSessionGeneration(sessionId);
     }
+  }
+
+  async restartSession(sessionId: string): Promise<SessionInfo> {
+    return this.withLifecycleLock(() => this.restartSessionLocked(sessionId));
+  }
+
+  private async restartSessionLocked(sessionId: string): Promise<SessionInfo> {
+    const current = this.sessionInfo.get(sessionId);
+    if (!current) throw new NotFoundException(`Session ${sessionId} not found`);
+
+    this.cancelReconnect(sessionId);
+    const generation = this.nextSessionGeneration(sessionId);
+    const sock = this.sessions.get(sessionId);
+    this.sessions.delete(sessionId);
+    if (sock) {
+      try {
+        sock.end(undefined);
+      } catch {
+        // The socket is already being replaced; its persisted auth state remains usable.
+      }
+    }
+
+    this.sessionInfo.set(sessionId, {
+      ...current,
+      status: 'connecting',
+      qrCode: undefined,
+      qrExpiresAt: undefined,
+      retryCount: 0,
+      lastDisconnectReason: null,
+    });
+    this.qrMeta.delete(sessionId);
+
+    try {
+      await this.initSocket(sessionId, current.proxy, undefined, generation);
+    } catch (error) {
+      const info = this.sessionInfo.get(sessionId);
+      if (info && this.isCurrentSession(sessionId, generation)) {
+        this.sessionInfo.set(sessionId, {
+          ...info,
+          status: 'failed',
+          lastDisconnectReason: 'Disconnected',
+        });
+      }
+      this.sessions.delete(sessionId);
+      throw error;
+    }
+
+    return this.getSessionInfo(sessionId);
   }
 
   getSessionPath(sessionId: string): string {
@@ -346,7 +459,13 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
 
   // ─── Core socket init ──────────────────────────────────────────────────
 
-  private async initSocket(sessionId: string, proxy?: string, configFields?: Partial<SessionConfig>): Promise<void> {
+  private async initSocket(
+    sessionId: string,
+    proxy?: string,
+    configFields?: Partial<SessionConfig>,
+    generation = this.sessionGenerations.get(sessionId),
+  ): Promise<void> {
+    if (!this.isCurrentSession(sessionId, generation)) return;
     const sessionPath = this.resolveSessionPath(sessionId);
     if (!fs.existsSync(sessionPath)) {
       fs.mkdirSync(sessionPath, { recursive: true });
@@ -374,6 +493,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    if (!this.isCurrentSession(sessionId, generation)) return;
 
     let version: [number, number, number];
     try {
@@ -383,6 +503,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       version = WA_VERSION_FALLBACK;
       console.warn(`[${sessionId}] fetchLatestBaileysVersion failed (likely proxy-only network), using WA_VERSION_FALLBACK`);
     }
+    if (!this.isCurrentSession(sessionId, generation)) return;
 
     const socketOptions: Parameters<typeof makeWASocket>[0] = {
       version,
@@ -407,6 +528,10 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     }
 
     const sock = makeWASocket(socketOptions);
+    if (!this.isCurrentSession(sessionId, generation)) {
+      sock.end(undefined);
+      return;
+    }
 
     this.sessions.set(sessionId, sock);
 
@@ -415,7 +540,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-      await this.handleConnectionUpdate(sessionId, update);
+      await this.handleConnectionUpdate(sessionId, update, generation);
     });
 
     sock.ev.on('messages.upsert', async (m) => {
@@ -460,14 +585,17 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
   private async handleConnectionUpdate(
     sessionId: string,
     update: Partial<BaileysEventMap['connection.update']>,
+    generation = this.sessionGenerations.get(sessionId),
   ) {
     const { connection, lastDisconnect, qr } = update;
+    if (!this.isCurrentSession(sessionId, generation)) return;
     const info = this.sessionInfo.get(sessionId);
     if (!info) return;
 
     // New QR code generated
     if (qr) {
       const qrBase64 = await QRCode.toDataURL(qr);
+      if (!this.isCurrentSession(sessionId, generation)) return;
       const generatedAt = new Date();
       this.qrMeta.set(sessionId, { generatedAt });
       this.sessionInfo.set(sessionId, {
@@ -525,6 +653,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         // User explicitly logged out — don't reconnect, clean up
         this.sessionInfo.set(sessionId, { ...info, status: 'logged_out', lastDisconnectReason: safeReason });
         await this.webhookService.fire('session.logged_out', sessionId, {});
+        if (!this.isCurrentSession(sessionId, generation)) return;
         this.sessions.delete(sessionId);
         return;
       }
@@ -560,16 +689,14 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       await this.webhookService.fire('session.disconnected', sessionId, {
         reason: safeReason,
       });
+      if (!this.isCurrentSession(sessionId, generation)) return;
 
       const delay = this.RETRY_DELAY_MS * Math.pow(2, info.retryCount); // exponential backoff
       console.log(
         `[${sessionId}] Reconnecting in ${delay}ms (attempt ${newRetryCount}/${maxAttempts})`,
       );
 
-      setTimeout(() => {
-        this.sessions.delete(sessionId);
-        this.initSocket(sessionId, info.proxy);
-      }, delay);
+      this.scheduleReconnect(sessionId, info.proxy, generation ?? this.nextSessionGeneration(sessionId), delay);
     }
   }
 
@@ -1008,6 +1135,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       } else {
         restoredConfig = { ...SESSION_CONFIG_DEFAULTS };
       }
+      const generation = this.nextSessionGeneration(sessionId);
       this.sessionConfigs.set(sessionId, restoredConfig);
 
       console.log(`[Restore] Restoring session: ${sessionId}${restoredProxy ? ` (proxy: ${restoredProxy})` : ''}`);
@@ -1020,7 +1148,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         config: restoredConfig,
       });
 
-      this.initSocket(sessionId, restoredProxy).catch(err =>
+      this.initSocket(sessionId, restoredProxy, undefined, generation).catch(err =>
         console.error(`[Restore] Failed to init session ${sessionId}: ${err.message}`)
       );
     }

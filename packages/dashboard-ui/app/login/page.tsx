@@ -78,7 +78,7 @@ function LoginForm() {
       <SessionNotice />
 
       {error && (
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+        <p id="login-error" role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
           {error}
         </p>
       )}
@@ -90,10 +90,13 @@ function LoginForm() {
           type="email"
           placeholder="you@example.com"
           autoComplete="email"
+          name="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
           disabled={loading}
+          aria-invalid={!!error}
+          aria-describedby={error ? "login-error" : undefined}
         />
       </div>
 
@@ -109,14 +112,17 @@ function LoginForm() {
           type="password"
           placeholder="••••••••"
           autoComplete="current-password"
+          name="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
           disabled={loading}
+          aria-invalid={!!error}
+          aria-describedby={error ? "login-error" : undefined}
         />
       </div>
 
-      <Button type="submit" className="w-full mt-1" disabled={loading}>
+      <Button type="submit" className="w-full mt-1" disabled={loading} aria-busy={loading}>
         {loading ? "Signing in…" : "Sign in"}
       </Button>
     </form>
@@ -130,7 +136,7 @@ export default function LoginPage() {
       <div className="flex w-full flex-col justify-between px-8 py-10 sm:px-12 lg:w-[44%]">
         {/* Logo */}
         <div className="flex items-center gap-2">
-          <MessageSquare className="text-primary" size={22} />
+          <MessageSquare className="text-primary" size={22} aria-hidden="true" />
           <span className="text-lg font-bold tracking-tight">WaSphere</span>
         </div>
 

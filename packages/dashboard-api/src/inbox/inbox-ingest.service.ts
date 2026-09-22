@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookEventDto } from '../internal/dto/webhook-event.dto';
 import { InboxEventsService } from './inbox-events.service';
+import { AutomationService } from '../automations/automations.service';
 
 // Baileys contentType -> our friendly message `type` string.
 const TYPE_MAP: Record<string, string> = {
@@ -48,7 +49,15 @@ function previewFor(type: string, body: string | null): string {
  * the existing `POST /internal/webhook-event` path alongside the
  * webhook fan-out (it does not replace it). Idempotent on (workspace, waMessageId).
  */
-const STATUS_RANK: Record<string, number> = { SENT: 1, DELIVERED: 2, READ: 3 };
+const STATUS_RANK: Record<string, number> = {
+  PENDING: 0,
+  SENT: 1,
+  DELIVERED: 2,
+  READ: 3,
+  FAILED: 4,
+};
+type DeliveryStatus = 'SENT' | 'DELIVERED' | 'READ';
+type StatusAdvanceResult = { updated: boolean; exists: boolean };
 
 @Injectable()
 export class InboxIngestService {
@@ -63,6 +72,7 @@ export class InboxIngestService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: InboxEventsService,
+    @Optional() private readonly automations?: AutomationService,
   ) {}
 
   private rememberPendingStatus(workspaceId: string, waMessageId: string, status: string): void {
@@ -84,25 +94,47 @@ export class InboxIngestService {
     const pending = this.pendingStatus.get(key);
     if (!pending) return;
     this.pendingStatus.delete(key);
-    const res = await this.prisma.message.updateMany({
-      where: { workspaceId, waMessageId },
-      data: { status: pending.status as 'SENT' | 'DELIVERED' | 'READ' },
-    });
-    if (res.count > 0) {
+    const result = await this.advanceStatus(workspaceId, waMessageId, pending.status as DeliveryStatus);
+    if (result.updated) {
       this.events.emit({ type: 'message.status', workspaceId, payload: { waMessageId, status: pending.status } });
     }
   }
 
-  /** Fire-and-forget entry point — never blocks the internal 202 response. */
-  ingest(workspaceId: string, dto: WebhookEventDto): void {
-    this.handle(workspaceId, dto).catch((err: unknown) => {
-      this.logger.error(
-        `[Inbox] ingest error ws=${workspaceId} event=${dto.event}: ${String(err)}`,
-      );
-    });
+  // The rank comparison runs inside the UPDATE, so concurrent webhook handlers
+  // cannot overwrite a higher status after they have read it.
+  private async advanceStatus(
+    workspaceId: string,
+    waMessageId: string,
+    status: DeliveryStatus,
+  ): Promise<StatusAdvanceResult> {
+    const [result] = await this.prisma.$queryRaw<StatusAdvanceResult[]>(Prisma.sql`
+      WITH updated AS (
+        UPDATE "messages"
+        SET "status" = CAST(${status} AS "MessageDeliveryStatus")
+        WHERE "workspace_id" = CAST(${workspaceId} AS uuid)
+          AND "wa_message_id" = ${waMessageId}
+          AND CASE "status"
+            WHEN 'PENDING' THEN 0
+            WHEN 'SENT' THEN 1
+            WHEN 'DELIVERED' THEN 2
+            WHEN 'READ' THEN 3
+            WHEN 'FAILED' THEN 4
+          END < ${STATUS_RANK[status]}
+        RETURNING 1
+      )
+      SELECT
+        EXISTS (SELECT 1 FROM updated) AS "updated",
+        EXISTS (
+          SELECT 1 FROM "messages"
+          WHERE "workspace_id" = CAST(${workspaceId} AS uuid)
+            AND "wa_message_id" = ${waMessageId}
+        ) AS "exists"
+    `);
+    return result ?? { updated: false, exists: false };
   }
 
-  private async handle(workspaceId: string, dto: WebhookEventDto): Promise<void> {
+  /** Resolve after durable Inbox changes and any matching automation evaluation finish. */
+  async ingestAndWait(workspaceId: string, dto: WebhookEventDto): Promise<void> {
     switch (dto.event) {
       case 'message.received':
         return this.ingestInbound(workspaceId, dto);
@@ -183,6 +215,18 @@ export class InboxIngestService {
           data: { lastPreview: previewFor(type, body) },
         });
         this.events.emit({ type: 'message.new', workspaceId, conversationId: dup.conversationId });
+        if (!fromMe) {
+          await this.automations?.evaluateInbound({
+            workspaceId,
+            providerSessionId: dto.sessionId,
+            providerMessageId: waMessageId,
+            conversationId: dup.conversationId,
+            type,
+            body,
+            fromMe,
+            isGroup,
+          });
+        }
       }
       return;
     }
@@ -238,9 +282,21 @@ export class InboxIngestService {
       });
 
       return convo.id;
-    });
+    }, { timeout: 15_000 });
 
     this.events.emit({ type: 'message.new', workspaceId, conversationId });
+    if (!fromMe) {
+      await this.automations?.evaluateInbound({
+        workspaceId,
+        providerSessionId: dto.sessionId,
+        providerMessageId: waMessageId,
+        conversationId,
+        type,
+        body,
+        fromMe,
+        isGroup,
+      });
+    }
   }
 
   // Outbound messages sent via ANY path (API, tester, or inbox composer) are
@@ -302,7 +358,7 @@ export class InboxIngestService {
         },
       });
       return convo.id;
-    });
+    }, { timeout: 15_000 });
 
     // A delivery status may have raced ahead of this row — apply it now.
     await this.applyPendingStatus(workspaceId, waMessageId);
@@ -321,18 +377,17 @@ export class InboxIngestService {
         this.logger.debug(`[Inbox] status update skipped — id=${waMessageId ?? 'n/a'} raw=${JSON.stringify(statusNum)}`);
         continue;
       }
-      const res = await this.prisma.message.updateMany({
-        where: { workspaceId, waMessageId },
-        data: { status },
-      });
-      if (res.count > 0) {
-        this.logger.debug(`[Inbox] status ${status} applied to ${waMessageId} (${res.count} row)`);
+      const result = await this.advanceStatus(workspaceId, waMessageId, status);
+      if (result.updated) {
+        this.logger.debug(`[Inbox] status ${status} applied to ${waMessageId} (1 row)`);
         this.events.emit({ type: 'message.status', workspaceId, payload: { waMessageId, status } });
-      } else {
+      } else if (!result.exists) {
         // The message row may not exist yet (status raced ahead of the
         // message.sent mirror). Buffer it; ingestOutbound applies it on insert.
         this.rememberPendingStatus(workspaceId, waMessageId, status);
         this.logger.debug(`[Inbox] status ${status} buffered for ${waMessageId} (row not yet present)`);
+      } else {
+        this.logger.debug(`[Inbox] status ${status} ignored for ${waMessageId} (higher status already stored)`);
       }
     }
   }

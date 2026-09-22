@@ -52,14 +52,16 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
   )
 }
 
-function NotesEditor({ value, onSave }: { value: string; onSave: (notes: string) => void }) {
+function NotesEditor({ value, onSave }: { value: string; onSave: (notes: string) => Promise<boolean> }) {
   const [draft, setDraft] = React.useState(value)
   React.useEffect(() => { setDraft(value) }, [value])
   return (
     <Textarea
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => { if (draft !== value) onSave(draft) }}
+      onBlur={() => {
+        if (draft !== value) void onSave(draft).then((ok) => { if (!ok) setDraft(value) })
+      }}
       placeholder="Add notes about this customer…"
       maxLength={2000}
       rows={3}
@@ -94,7 +96,7 @@ export function ContactPanel({
   conversation: Conversation
   recent: InboxMessage[]
   onTagsChange?: (tags: string[]) => void
-  onNotesChange?: (notes: string) => void
+  onNotesChange?: (notes: string) => Promise<boolean>
   muted?: boolean
   onToggleMute?: (muted: boolean) => void
   project?: ProjectRoute | null
@@ -102,7 +104,7 @@ export function ContactPanel({
   onProjectChange?: (projectId: string) => void
 }) {
   const c = conversation.contact
-  const visible = recent.filter((m) => m.type !== "unknown")
+  const visible = recent
   const images = recent.filter((m) => (m.type === "image" || m.type === "sticker") && m.mediaUrl)
   const docs = recent.filter((m) => m.type === "document")
   const mediaCount = images.length + docs.length

@@ -126,6 +126,13 @@ export class SessionsService {
     return this.adapter.logoutSession(sessionId);
   }
 
+  async restartSession(sessionId: string): Promise<SessionInfo> {
+    if (this.meta.has(sessionId)) {
+      throw new BadRequestException('Session restart is only supported for Baileys sessions.');
+    }
+    return this.adapter.restartSession(sessionId);
+  }
+
   async patchSessionConfig(sessionId: string, dto: PatchSessionConfigDto): Promise<{ config: SessionConfig }> {
     if (this.meta.has(sessionId)) {
       throw new BadRequestException('Per-session anti-ban config applies to Baileys sessions only.');

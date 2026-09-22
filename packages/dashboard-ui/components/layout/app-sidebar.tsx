@@ -17,7 +17,6 @@ import {
   Users,
   Sparkles,
   Plug,
-  Lock,
   ExternalLink,
   BookOpen,
   ShieldCheck,
@@ -40,24 +39,25 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 // `cap` → the workspace capability required to see this item (see
 // dashboard-api/src/lib/capabilities.ts). `always` items are visible to every
 // member; `adminOnly` items are OWNER/ADMIN only. Owners/admins have every
 // capability, so they see everything.
-const NAV_ITEMS: {
+type NavDefinition = {
   label: string;
   href: string;
   icon: React.ElementType;
   cap?: string | string[];
   always?: boolean;
   adminOnly?: boolean;
-}[] = [
+};
+
+const NAV_ITEMS: NavDefinition[] = [
   { label: "Overview", href: "/dashboard/overview", icon: LayoutDashboard, always: true },
   { label: "Sessions", href: "/dashboard/sessions", icon: Smartphone, cap: ["sessions", "sessions_create"] },
   { label: "Inbox", href: "/dashboard/inbox", icon: Inbox, cap: "inbox" },
-  { label: "Projects", href: "/dashboard/projects", icon: FolderKanban, always: true },
+  { label: "Projects", href: "/dashboard/projects", icon: FolderKanban, cap: "projects" },
   { label: "Contacts", href: "/dashboard/contacts", icon: Contact, cap: "contacts" },
   { label: "Messages", href: "/dashboard/messages", icon: MessageSquare, cap: "messages" },
   { label: "Webhooks", href: "/dashboard/webhooks", icon: Webhook, cap: "webhooks" },
@@ -66,12 +66,12 @@ const NAV_ITEMS: {
   { label: "Settings", href: "/dashboard/settings", icon: Settings, cap: "settings" },
 ];
 
-const PRO_ITEMS = [
-  { label: "Campaigns", icon: Send },
-  { label: "Automations", icon: Workflow },
-  { label: "CRM & Inbox", icon: Users },
-  { label: "AI Replies", icon: Sparkles },
-  { label: "WHMCS", icon: Plug },
+const PRO_ITEMS: NavDefinition[] = [
+  { label: "Campaigns", href: "/dashboard/campaigns", icon: Send, cap: "messages" },
+  { label: "Automations", href: "/dashboard/automations", icon: Workflow, cap: "messages" },
+  { label: "CRM", href: "/dashboard/crm", icon: Users, cap: "contacts" },
+  { label: "AI Replies", href: "/dashboard/ai-replies", icon: Sparkles, cap: "inbox" },
+  { label: "WHMCS", href: "/dashboard/whmcs", icon: Plug, cap: "messages" },
 ];
 
 function NavItem({
@@ -184,20 +184,23 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
   // sidebar (Sessions, Inbox, Contacts, Messages, Webhooks, Team, Developer,
   // Settings) is showcased instead of collapsing to just Overview.
   const isManager = demoMode || role === "OWNER" || role === "ADMIN";
-  const navItems = NAV_ITEMS.filter((i) => {
+  const canSee = (i: NavDefinition) => {
     if (i.always) return true;
     if (i.adminOnly) return isManager;
     if (isManager) return true;
     if (caps === null) return false; // still loading — hide gated items
     if (!i.cap) return false;
     return (Array.isArray(i.cap) ? i.cap : [i.cap]).some((capability) => caps.includes(capability));
-  });
+  };
+  const navItems = NAV_ITEMS.filter(canSee);
+  const proItems = PRO_ITEMS.filter(canSee);
   // On mobile the sidebar is a full drawer — never icon-collapse it.
   const collapsed = !isMobile && state === "collapsed";
 
-  // In demo mode the local API-docs proxy has no backend, so link to the public
-  // hosted docs instead.
+  // The dashboard proxy forwards these paths to each service's real /api/reference endpoint.
   const docsBase = demoMode ? "https://app.wasphere.com" : "";
+  const waDocsHref = `${docsBase}/docs/wa-server/api/reference`;
+  const adminDocsHref = `${docsBase}/docs/admin/api/reference`;
 
   // Custom workspace logo (branding). Falls back to the WaSphere wordmark.
   const [logo, setLogo] = React.useState<string | null>(null);
@@ -263,13 +266,13 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
             <SidebarMenu>
               <ExternalNavItem
                 label="WhatsApp API"
-                href={`${docsBase}/docs/wa-server`}
+                href={waDocsHref}
                 icon={BookOpen}
                 collapsed={collapsed}
               />
               <ExternalNavItem
                 label="Admin API"
-                href={`${docsBase}/docs/admin`}
+                href={adminDocsHref}
                 icon={ShieldCheck}
                 collapsed={collapsed}
               />
@@ -277,57 +280,33 @@ export function AppSidebar({ demoMode = false }: { demoMode?: boolean }) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarSeparator />
+        {proItems.length > 0 && (
+          <>
+            <SidebarSeparator />
 
-        <SidebarGroup>
-          {!collapsed && (
-            <SidebarGroupLabel className="text-muted-foreground/60 text-xs uppercase tracking-wider px-2 mb-1">
-              Coming in Pro
-            </SidebarGroupLabel>
-          )}
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {PRO_ITEMS.map(({ label, icon: Icon }) => (
-                <SidebarMenuItem key={label}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      className="w-full"
-                      render={
-                        <SidebarMenuButton
-                          disabled
-                          className={[
-                            "opacity-40 cursor-not-allowed",
-                            collapsed
-                              ? "flex-col justify-center gap-1 h-auto py-2"
-                              : "flex-row gap-2",
-                          ].join(" ")}
-                        />
-                      }
-                    >
-                      <Icon className="shrink-0" size={18} />
-                      <span
-                        className={
-                          collapsed
-                            ? "text-[10px] text-center leading-none"
-                            : "text-sm leading-none flex-1"
-                        }
-                      >
-                        {label}
-                      </span>
-                      {!collapsed && <Lock size={12} className="shrink-0 ml-auto" />}
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      <span className="flex items-center gap-1.5">
-                        <Lock size={12} />
-                        Available in WaSphere Pro — coming soon
-                      </span>
-                    </TooltipContent>
-                  </Tooltip>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+            <SidebarGroup>
+              {!collapsed && (
+                <SidebarGroupLabel className="text-muted-foreground/60 text-xs uppercase tracking-wider px-2 mb-1">
+                  Pro
+                </SidebarGroupLabel>
+              )}
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {proItems.map(({ label, href, icon }) => (
+                    <NavItem
+                      key={href}
+                      label={label}
+                      href={href}
+                      icon={icon}
+                      active={pathname === href || pathname.startsWith(href + "/")}
+                      collapsed={collapsed}
+                    />
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </>
+        )}
       </SidebarContent>
 
       <SidebarFooter />

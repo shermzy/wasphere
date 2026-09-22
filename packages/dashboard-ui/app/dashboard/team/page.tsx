@@ -24,6 +24,7 @@ type Role = { id: string; name: string; capabilities: string[]; memberCount: num
 const CAP_LABELS: Record<string, string> = {
   inbox: "Inbox",
   contacts: "Contacts",
+  projects: "Projects",
   messages: "Messages",
   sessions_create: "Create sessions",
   sessions: "Sessions",
@@ -159,12 +160,12 @@ export default function TeamPage() {
     }))
   }
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>
+  if (loading) return <p role="status" aria-live="polite" className="text-sm text-muted-foreground">Loading…</p>
 
   if (!canManage) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-xl border bg-card py-16 text-center">
-        <UsersIcon className="size-8 text-primary/40" />
+        <UsersIcon className="size-8 text-primary/40" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">Only owners and admins can manage the team.</p>
       </div>
     )
@@ -189,14 +190,14 @@ export default function TeamPage() {
             <Label htmlFor="inviteEmail">Email <span className="text-muted-foreground">(optional)</span></Label>
             <Input id="inviteEmail" type="email" placeholder="teammate@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} className="h-9 min-w-[220px]" />
           </div>
-          <Button onClick={() => void createInvite()} disabled={creating || !inviteRole}>
-            <Link2 className="mr-1.5 size-4" /> {creating ? "Generating…" : inviteEmail.trim() ? "Send invite" : "Generate invite link"}
+          <Button onClick={() => void createInvite()} disabled={creating || !inviteRole} aria-busy={creating}>
+            <Link2 className="mr-1.5 size-4" aria-hidden="true" /> {creating ? "Generating…" : inviteEmail.trim() ? "Send invite" : "Generate invite link"}
           </Button>
         </div>
         {newLink && (
           <div className="mt-3 flex items-center gap-2">
             <code className="flex-1 truncate rounded-md border border-input bg-muted/40 px-2.5 py-2 text-xs">{newLink}</code>
-            <Button variant="outline" size="icon" onClick={copyLink}>{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}</Button>
+            <Button variant="outline" size="icon" onClick={copyLink} aria-label={copied ? "Invite link copied" : "Copy invite link"}>{copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}</Button>
           </div>
         )}
         <p className="mt-2 text-xs text-muted-foreground">Add an email to send the invite directly, or leave it blank to just generate a link. It expires in 7 days. They join with the role you pick and set their own password.</p>
@@ -208,14 +209,14 @@ export default function TeamPage() {
           <h2 className="text-sm font-semibold">Roles</h2>
           {isOwner && (
             <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => setEditingRole({ name: "", capabilities: ["inbox", "contacts"] })}>
-              <Plus className="size-3.5" /> New role
+              <Plus className="size-3.5" aria-hidden="true" /> New role
             </Button>
           )}
         </div>
 
         {/* System Owner/Admin tiers (always full access, not editable) */}
         <div className="flex items-center gap-3 border-b px-4 py-2.5">
-          <Shield className="size-4 shrink-0 text-amber-500" />
+          <Shield className="size-4 shrink-0 text-amber-500" aria-hidden="true" />
           <span className="text-sm font-medium">Owner &amp; Admin</span>
           <span className="text-xs text-muted-foreground">Full access — every section</span>
         </div>
@@ -239,11 +240,11 @@ export default function TeamPage() {
             </div>
             {isOwner && (
               <div className="flex shrink-0 items-center gap-1">
-                <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditingRole({ id: r.id, name: r.name, capabilities: r.capabilities })} title="Edit">
-                  <Pencil className="size-4" />
+                <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditingRole({ id: r.id, name: r.name, capabilities: r.capabilities })} title="Edit" aria-label={`Edit role ${r.name}`}>
+                  <Pencil className="size-4" aria-hidden="true" />
                 </Button>
-                <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => void deleteRole(r)} title="Delete">
-                  <Trash2 className="size-4" />
+                <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => void deleteRole(r)} title="Delete" aria-label={`Delete role ${r.name}`}>
+                  <Trash2 className="size-4" aria-hidden="true" />
                 </Button>
               </div>
             )}
@@ -279,6 +280,7 @@ export default function TeamPage() {
                 <select
                   value={m.role === "ADMIN" ? ADMIN : (m.customRoleId ?? "")}
                   onChange={(e) => void assignRole(m.userId, e.target.value)}
+                  aria-label={`Role for ${m.email}`}
                   disabled={myRole === "ADMIN" && m.role === "ADMIN"}
                   className="h-8 rounded-md border border-input bg-transparent px-2 text-xs disabled:opacity-50"
                 >
@@ -287,8 +289,8 @@ export default function TeamPage() {
                   {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                   {isOwner && <option value={ADMIN}>Admin</option>}
                 </select>
-                <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => void removeMember(m.userId, m.email)} disabled={myRole === "ADMIN" && m.role === "ADMIN"}>
-                  <Trash2 className="size-4" />
+                <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => void removeMember(m.userId, m.email)} aria-label={`Remove ${m.email} from workspace`} disabled={myRole === "ADMIN" && m.role === "ADMIN"}>
+                  <Trash2 className="size-4" aria-hidden="true" />
                 </Button>
               </div>
             )}
@@ -316,13 +318,14 @@ export default function TeamPage() {
                       key={cap}
                       type="button"
                       onClick={() => toggleDraftCap(cap)}
+                      aria-pressed={on}
                       className={[
-                        "flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                        "flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                         on ? "border-primary/40 bg-primary/10 text-primary" : "border-input hover:bg-muted",
                       ].join(" ")}
                     >
                       <span className={["flex size-4 items-center justify-center rounded border", on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"].join(" ")}>
-                        {on && <Check className="size-3" />}
+                        {on && <Check className="size-3" aria-hidden="true" />}
                       </span>
                       {CAP_LABELS[cap]}
                     </button>
@@ -333,7 +336,7 @@ export default function TeamPage() {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setEditingRole(null)}>Cancel</Button>
-            <Button onClick={() => void saveRole()} disabled={savingRole}>{savingRole ? "Saving…" : "Save role"}</Button>
+            <Button onClick={() => void saveRole()} disabled={savingRole} aria-busy={savingRole}>{savingRole ? "Saving…" : "Save role"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

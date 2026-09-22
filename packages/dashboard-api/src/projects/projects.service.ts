@@ -9,6 +9,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { hasCapability } from '../lib/capabilities';
 import { CreateProjectRouteDto, UpdateProjectRouteDto } from './dto/project-route.dto';
 import { ProjectTargetsQueryDto } from './dto/project-targets-query.dto';
 import { normalizeProjectRouteKey } from './project-route-key';
@@ -35,9 +36,12 @@ export class ProjectsService {
     }
     const member = await this.prisma.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
-      select: { id: true },
+      select: { role: true, customRole: { select: { capabilities: true } } },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
+    if (!hasCapability(member.role, member.customRole?.capabilities, 'projects')) {
+      throw new ForbiddenException('You need the projects permission in this workspace');
+    }
   }
 
   private async waConfig(principal: Principal, workspaceId: string): Promise<WaConfig> {
@@ -102,6 +106,22 @@ export class ProjectsService {
     return config;
   }
 
+  private async lockOwnedSession(
+    tx: Prisma.TransactionClient,
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const rows = await tx.$queryRaw<Array<{ workspaceId: string }>>(Prisma.sql`
+      SELECT "workspace_id" AS "workspaceId"
+      FROM "workspace_sessions"
+      WHERE "provider_session_id" = ${sessionId}
+      FOR SHARE
+    `);
+    if (rows.length !== 1 || rows[0].workspaceId !== workspaceId) {
+      throw new ConflictException('Session ownership changed while this request was being confirmed.');
+    }
+  }
+
   private async fetchGroups(config: WaConfig, sessionId: string): Promise<Array<{ id: string; subject: string }>> {
     const body = await this.getJson(config, `/api/sessions/${encodeURIComponent(sessionId)}/groups`);
     const rows = Array.isArray(body)
@@ -109,13 +129,15 @@ export class ProjectsService {
       : (body && typeof body === 'object' && Array.isArray((body as { groups?: unknown }).groups)
         ? (body as { groups: unknown[] }).groups
         : []);
-    return rows.flatMap((row) => {
-      if (!row || typeof row !== 'object') return [];
+    const groups = new Map<string, { id: string; subject: string }>();
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
       const item = row as { id?: unknown; subject?: unknown };
-      return typeof item.id === 'string' && item.id.endsWith('@g.us')
-        ? [{ id: item.id, subject: typeof item.subject === 'string' ? item.subject : item.id }]
-        : [];
-    });
+      if (typeof item.id === 'string' && item.id.endsWith('@g.us')) {
+        groups.set(item.id, { id: item.id, subject: typeof item.subject === 'string' ? item.subject : item.id });
+      }
+    }
+    return [...groups.values()];
   }
 
   private async resolveTarget(
@@ -203,9 +225,7 @@ export class ProjectsService {
       include: { contact: true },
     });
     const contacts = await this.prisma.contact.findMany({ where: { workspaceId } });
-    const conversationByTarget = new Map(
-      conversations.map((conversation) => [`${conversation.sessionId}:${conversation.contact.jid}`, conversation]),
-    );
+    const targetKey = (sessionId: string, jid: string) => JSON.stringify([sessionId, jid]);
 
     let config: WaConfig | null = null;
     let snapshot = { loaded: false, statuses: new Map<string, string>() };
@@ -227,7 +247,36 @@ export class ProjectsService {
       ? new Set(ownedSessionIds.has(query.sessionId) ? [query.sessionId] : [])
       : ownedSessionIds;
 
-    const targets = new Map<string, {
+    const liveSessionIds = config
+      ? [...sessionIds].filter((sessionId) => snapshot.statuses.get(sessionId) === 'connected')
+      : [];
+    const liveGroupsBySession = new Map<string, Array<{ id: string; subject: string }>>();
+    if (config) {
+      const groupResults = await Promise.all(liveSessionIds.map(async (sessionId) => {
+        try {
+          return { sessionId, groups: await this.fetchGroups(config!, sessionId) };
+        } catch {
+          return { sessionId, groups: [] };
+        }
+      }));
+      for (const result of groupResults) liveGroupsBySession.set(result.sessionId, result.groups);
+      ownedSessionIds = await this.workspaces.listProviderSessionIds(principal.userId, workspaceId);
+    }
+
+    const visibleConversations = config
+      ? conversations.filter((conversation) => ownedSessionIds.has(conversation.sessionId))
+      : conversations;
+    const conversationByTarget = new Map(
+      visibleConversations.map((conversation) => [targetKey(conversation.sessionId, conversation.contact.jid), conversation]),
+    );
+    const conversationsByContact = new Map<string, Array<(typeof visibleConversations)[number]>>();
+    for (const conversation of visibleConversations) {
+      const observed = conversationsByContact.get(conversation.contactId);
+      if (observed) observed.push(conversation);
+      else conversationsByContact.set(conversation.contactId, [conversation]);
+    }
+
+    type Target = {
       sessionId: string;
       jid: string;
       type: 'group' | 'direct';
@@ -235,17 +284,25 @@ export class ProjectsService {
       conversationId: string | null;
       assignedProject: { id: string; name: string; routeKey: string; enabled: boolean } | null;
       availability: 'connected' | 'unavailable';
-    }>();
+    };
+    const targets = new Map<string, Map<string, Target>>();
+    const setTarget = (target: Target) => {
+      let sessionTargets = targets.get(target.sessionId);
+      if (!sessionTargets) {
+        sessionTargets = new Map();
+        targets.set(target.sessionId, sessionTargets);
+      }
+      sessionTargets.set(target.jid, target);
+    };
 
     for (const contact of contacts) {
       if (contact.jid.endsWith('@g.us')) continue;
-      const observedSessions = conversations
-        .filter((conversation) => conversation.contactId === contact.id)
-        .map((conversation) => conversation.sessionId);
-      for (const sessionId of new Set(observedSessions)) {
-        const conversation = conversationByTarget.get(`${sessionId}:${contact.jid}`);
+      const observedSessions = new Set((conversationsByContact.get(contact.id) ?? [])
+        .map((conversation) => conversation.sessionId));
+      for (const sessionId of observedSessions) {
+        const conversation = conversationByTarget.get(targetKey(sessionId, contact.jid));
         const project = conversation ? projectByConversation.get(conversation.id) : undefined;
-        targets.set(`${sessionId}:${contact.jid}`, {
+        setTarget({
           sessionId,
           jid: contact.jid,
           type: 'direct',
@@ -259,10 +316,10 @@ export class ProjectsService {
       }
     }
 
-    for (const conversation of conversations) {
+    for (const conversation of visibleConversations) {
       if (!conversation.contact.jid.endsWith('@g.us')) continue;
       const project = projectByConversation.get(conversation.id);
-      targets.set(`${conversation.sessionId}:${conversation.contact.jid}`, {
+      setTarget({
         sessionId: conversation.sessionId,
         jid: conversation.contact.jid,
         type: 'group',
@@ -274,30 +331,26 @@ export class ProjectsService {
     }
 
     if (config) {
-      for (const sessionId of sessionIds) {
-        if (snapshot.statuses.get(sessionId) !== 'connected') continue;
-        try {
-          for (const group of await this.fetchGroups(config, sessionId)) {
-            const conversation = conversationByTarget.get(`${sessionId}:${group.id}`);
-            const project = conversation ? projectByConversation.get(conversation.id) : undefined;
-            targets.set(`${sessionId}:${group.id}`, {
-              sessionId,
-              jid: group.id,
-              type: 'group',
-              name: group.subject,
-              conversationId: conversation?.id ?? null,
-              assignedProject: project ? { id: project.id, name: project.name, routeKey: project.routeKey, enabled: project.enabled } : null,
-              availability: 'connected',
-            });
-          }
-        } catch {
-          // A connected session can lose its directory during reconnect; keep DB targets.
+      for (const sessionId of liveSessionIds) {
+        if (!ownedSessionIds.has(sessionId)) continue;
+        for (const group of liveGroupsBySession.get(sessionId) ?? []) {
+          const conversation = conversationByTarget.get(targetKey(sessionId, group.id));
+          const project = conversation ? projectByConversation.get(conversation.id) : undefined;
+          setTarget({
+            sessionId,
+            jid: group.id,
+            type: 'group',
+            name: group.subject,
+            conversationId: conversation?.id ?? null,
+            assignedProject: project ? { id: project.id, name: project.name, routeKey: project.routeKey, enabled: project.enabled } : null,
+            availability: 'connected',
+          });
         }
       }
     }
 
     const term = query.q?.trim().toLowerCase();
-    return [...targets.values()]
+    return [...targets.values()].flatMap((sessionTargets) => [...sessionTargets.values()])
       .filter((target) => !term || [target.name, target.jid, target.sessionId].some((value) => value.toLowerCase().includes(term)))
       .sort((a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId));
   }
@@ -313,11 +366,16 @@ export class ProjectsService {
     await this.assertConnectedSession(config, sessionId);
 
     await this.prisma.$transaction(async (tx) => {
+      await this.workspaces.assertProviderSession(principal.userId, workspaceId, sessionId);
+      await this.lockOwnedSession(tx, workspaceId, sessionId);
       const member = await tx.workspaceMember.findUnique({
         where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
-        select: { id: true },
+        select: { role: true, customRole: { select: { capabilities: true } } },
       });
       if (!member) throw new ForbiddenException('Not a member of this workspace');
+      if (!hasCapability(member.role, member.customRole?.capabilities, 'projects')) {
+        throw new ForbiddenException('You need the projects permission in this workspace');
+      }
       for (const group of groups) {
         const contact = await tx.contact.upsert({
           where: { workspaceId_jid: { workspaceId, jid: group.id } },
@@ -367,11 +425,15 @@ export class ProjectsService {
 
     try {
       const project = await this.prisma.$transaction(async (tx) => {
+        await this.lockOwnedSession(tx, workspaceId, sessionId);
         const member = await tx.workspaceMember.findUnique({
           where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
-          select: { id: true },
+          select: { role: true, customRole: { select: { capabilities: true } } },
         });
         if (!member) throw new ForbiddenException('Not a member of this workspace');
+        if (!hasCapability(member.role, member.customRole?.capabilities, 'projects')) {
+          throw new ForbiddenException('You need the projects permission in this workspace');
+        }
         const contact = await tx.contact.upsert({
           where: { workspaceId_jid: { workspaceId, jid: target.jid } },
           update: target.isGroup ? { whatsappName: target.name } : {},
@@ -433,11 +495,17 @@ export class ProjectsService {
 
     try {
       const project = await this.prisma.$transaction(async (tx) => {
+        if (target || dto.enabled === true) {
+          await this.lockOwnedSession(tx, workspaceId, sessionId);
+        }
         const member = await tx.workspaceMember.findUnique({
           where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
-          select: { id: true },
+          select: { role: true, customRole: { select: { capabilities: true } } },
         });
         if (!member) throw new ForbiddenException('Not a member of this workspace');
+        if (!hasCapability(member.role, member.customRole?.capabilities, 'projects')) {
+          throw new ForbiddenException('You need the projects permission in this workspace');
+        }
         let conversationId = existing.conversationId;
         if (target) {
           const contact = await tx.contact.upsert({
@@ -520,9 +588,12 @@ export class ProjectsService {
     await this.prisma.$transaction(async (tx) => {
       const member = await tx.workspaceMember.findUnique({
         where: { workspaceId_userId: { workspaceId, userId: principal.userId } },
-        select: { id: true },
+        select: { role: true, customRole: { select: { capabilities: true } } },
       });
       if (!member) throw new ForbiddenException('Not a member of this workspace');
+      if (!hasCapability(member.role, member.customRole?.capabilities, 'projects')) {
+        throw new ForbiddenException('You need the projects permission in this workspace');
+      }
       await tx.projectRouteAudit.create({
         data: {
           workspaceId, projectRouteId: existing.id, actorUserId: principal.userId,

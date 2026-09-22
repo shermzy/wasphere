@@ -2,6 +2,8 @@ export const PERMISSION_SCOPES = [
   'messages:send',
   'messages:send_bulk',
   'messages:read',
+  'contacts:read',
+  'contacts:write',
   'sessions:read',
   'sessions:write',
   'sessions:delete',

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import { hasCapability } from '../lib/capabilities';
 import { InboxEventsService, InboxEvent } from './inbox-events.service';
 
 interface Conn {
@@ -121,9 +122,9 @@ export class InboxSseService implements OnModuleDestroy {
     if (!userId) return null;
     const member = await this.prisma.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId, userId } },
-      select: { id: true },
+      select: { role: true, customRole: { select: { capabilities: true } } },
     });
-    return member ? userId : null;
+    return member && hasCapability(member.role, member.customRole?.capabilities, 'inbox') ? userId : null;
   }
 
   private extractToken(req: Request): string | null {

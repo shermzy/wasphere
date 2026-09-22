@@ -76,9 +76,50 @@ version on success.
 | `DATABASE_URL` | dashboard-api | PostgreSQL connection string |
 | `JWT_SECRET` | dashboard-api | Dashboard auth secret (min 32 chars) |
 | `ENCRYPTION_KEY` | dashboard-api | 32-byte hex (64 chars) for token encryption |
+| `META_CREDENTIALS_ENCRYPTION_KEY` | wa-server | Dedicated 32-byte hex (64 chars) AES-256-GCM key for Meta credential files; required when creating or restoring Meta sessions |
 | `INTERNAL_WEBHOOK_SECRET` | both | Shared secret for wa-server → dashboard events |
 | `CORS_ORIGIN` | both | Allowed browser origin — never `*` |
 | `WA_SERVER_INTERNAL_URL` | dashboard-ui | Default WA Server URL (see above) |
 | `DASHBOARD_API_URL` | dashboard-ui | Where the UI reaches the Dashboard API |
 
 Full lists with defaults live in each package's `.env.example`.
+
+### AI Replies Pro
+
+AI Replies Pro is draft-only: it reads a workspace-owned Inbox conversation,
+returns an editable suggestion, and never sends or saves a message. Configure
+all three variables on the dashboard API at runtime:
+
+| Variable | Notes |
+|---|---|
+| `AI_REPLY_BASE_URL` | OpenAI-compatible `http://` or `https://` base URL; `/chat/completions` is appended. No embedded credentials. |
+| `AI_REPLY_API_KEY` | Provider key; inject it into the dashboard-api runtime secret store and never expose it to the UI. |
+| `AI_REPLY_MODEL` | Provider model identifier. |
+
+If any value is missing or invalid, the AI Replies page reports **Operator
+setup required**. Set all three only when the operator has chosen a provider;
+the code does not activate a paid AI account, subscription, or provider by
+itself. AI Replies call the configured provider only to create a bounded draft;
+they do not send or save a WhatsApp message.
+
+### Meta credential encryption
+
+Set `META_CREDENTIALS_ENCRYPTION_KEY` only in the wa-server runtime secret
+store. It must be exactly 64 hexadecimal characters (32 bytes) and must be
+kept separate from `ENCRYPTION_KEY`. Meta session credential files use this
+key with AES-256-GCM; creating or restoring a Meta session fails closed when
+the key is missing or invalid. Do not put a real key in `.env.example`, these
+docs, source control, or logs. The service definition must pass the runtime
+variable into the relevant container; a host-side value alone does not change
+an already-running container.
+
+### Pro safety defaults
+
+- Campaign delivery claims each recipient before the provider call. A crash or
+  uncertain provider result remains indeterminate and is never automatically
+  retried.
+- New automation rules are disabled. Enabling or disabling a rule requires an
+  explicit operator confirmation and its exact provider session ID.
+- The WHMCS generator binds an exact workspace and connected session, enables
+  only selected events, checks the configured client opt-in field, and reads
+  `WASPHERE_API_KEY` at WHMCS runtime.
