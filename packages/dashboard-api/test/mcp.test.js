@@ -143,6 +143,11 @@ test('sends image and document attachments through MCP and rejects URL media', a
     },
   };
   const { client, server } = await connectMcp(inbox);
+  const sendTool = (await client.listTools()).tools.find((tool) => tool.name === 'send_project_update');
+  assert.ok(sendTool.inputSchema.properties.media);
+  assert.ok(sendTool.inputSchema.properties.fileName);
+  assert.ok(sendTool.inputSchema.properties.mimetype);
+  assert.deepEqual(sendTool.inputSchema.required, ['routeKey']);
 
   const attachments = [
     {
@@ -192,6 +197,17 @@ test('sends image and document attachments through MCP and rejects URL media', a
     },
   });
   assert.equal(rejectedUrl.isError, true);
+
+  const rejectedIncompleteDocument = await client.callTool({
+    name: 'send_project_update',
+    arguments: {
+      routeKey: '#fairbreeze',
+      kind: 'document',
+      media: 'data:text/plain;base64,aGVsbG8=',
+      mimetype: 'text/plain',
+    },
+  });
+  assert.equal(rejectedIncompleteDocument.isError, true);
 
   assert.deepEqual(sends.map((args) => args[3]), attachments.map(({ expected }) => expected));
   assert.ok(sends.every((args) => args[1] === 'workspace-id' && args[2] === 'fairbreeze'));

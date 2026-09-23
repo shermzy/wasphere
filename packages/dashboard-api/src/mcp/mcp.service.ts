@@ -47,7 +47,21 @@ const mediaDataUriInput = z.string().max(10_485_760).regex(
   /^data:[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*;base64,[A-Za-z0-9+/]+=*$/,
   'Media must be a base64 data URI',
 );
-const sendProjectUpdateInput = z.union([
+const sendProjectUpdateInput = z.object({
+  routeKey: routeKeyInput,
+  kind: z.enum(['text', 'image', 'document']).optional()
+    .describe('Update type. Omit for a text message.'),
+  text: z.string().trim().min(1).max(4096).optional()
+    .describe('Text message; required when kind is omitted or text.'),
+  media: mediaDataUriInput.optional()
+    .describe('Base64 data URI; required for image and document updates.'),
+  caption: z.string().max(1024).optional().describe('Optional image caption'),
+  fileName: z.string().min(1).max(255).optional()
+    .describe('Required document file name.'),
+  mimetype: z.string().min(1).max(127).optional()
+    .describe('Required document MIME type.'),
+}).strict();
+const sendProjectUpdatePayload = z.union([
   z.object({
     routeKey: routeKeyInput,
     kind: z.literal('text').optional(),
@@ -226,10 +240,14 @@ export class McpService {
         annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
       },
       async (args) => {
-        const sendArgs = args as unknown as SendProjectUpdateArgs;
         if (!hasPermission(principal.permissions, 'messages:send')) {
           return toolError('API key missing required permission: messages:send');
         }
+        const parsedArgs = sendProjectUpdatePayload.safeParse(args);
+        if (!parsedArgs.success) {
+          return toolError(parsedArgs.error.issues[0]?.message ?? 'Invalid project update.');
+        }
+        const sendArgs = parsedArgs.data;
 
         try {
           const normalized = normalizeRouteKey(sendArgs.routeKey);
