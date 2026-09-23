@@ -127,7 +127,6 @@ export class WebhookService implements OnModuleInit {
       await this.post(this.dashboardUrl, payload);
     } catch (err) {
       console.warn(`[Webhook] Failed to fire event ${event}: ${(err as Error).message}`);
-      throw err;
     }
   }
 

@@ -133,6 +133,15 @@ test('is idempotent on (workspace, waMessageId)', async () => {
   assert.equal(await prisma.message.count({ where: { workspaceId: wsId } }), 1);
 });
 
+test('concurrent duplicate outbound events are idempotent', async () => {
+  const dto = sentMsg('dup-outbound', '923000000011@s.whatsapp.net');
+  await Promise.all([handle(dto), handle(dto)]);
+  assert.equal(
+    await prisma.message.count({ where: { workspaceId: wsId, waMessageId: 'dup-outbound' } }),
+    1,
+  );
+});
+
 test('upgrades an undecryptable placeholder when the decoded content arrives', async () => {
   const jid = '923000000002@s.whatsapp.net';
   // 1) arrives undecryptable (no content / unknown type) -> stored as "unknown"

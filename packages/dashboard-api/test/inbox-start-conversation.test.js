@@ -34,9 +34,9 @@ function harness({ sessionError } = {}) {
       },
     },
     message: {
-      upsert: async (args) => {
+      createMany: async (args) => {
         calls.messages.push(args);
-        return { id: 'message-1', ...args.create };
+        return { count: 1 };
       },
     },
   };
@@ -122,16 +122,17 @@ test('template new-chat sends the exact template request and persists a safe sha
     languageCode: 'en_US',
     bodyParams: ['Alice', '42'],
   });
-  assert.equal(calls.messages[0].create.workspaceId, 'workspace-a');
-  assert.equal(calls.messages[0].create.conversationId, 'conversation-1');
-  assert.equal(calls.messages[0].create.type, 'text');
-  assert.equal(calls.messages[0].create.body, '📋 Template: approved_template — Alice, 42');
-  assert.deepEqual(calls.messages[0].create.payload, {
+  assert.equal(calls.messages[0].data[0].workspaceId, 'workspace-a');
+  assert.equal(calls.messages[0].data[0].conversationId, 'conversation-1');
+  assert.equal(calls.messages[0].data[0].type, 'text');
+  assert.equal(calls.messages[0].data[0].body, '📋 Template: approved_template — Alice, 42');
+  assert.deepEqual(calls.messages[0].data[0].payload, {
     templateName: 'approved_template',
     languageCode: 'en_US',
     bodyParams: ['Alice', '42'],
   });
-  assert.ok(!JSON.stringify(calls.messages[0].create).includes('test-token'));
+  assert.equal(calls.messages[0].skipDuplicates, true);
+  assert.ok(!JSON.stringify(calls.messages[0].data[0]).includes('test-token'));
   assert.deepEqual(calls.audit[0], {
     workspaceId: 'workspace-a',
     sessionId: 'meta-1',
@@ -156,8 +157,8 @@ test('text starts retain the existing text endpoint and never downgrade template
   });
   assert.equal(text.calls.fetch[0].url, 'https://wa.example/api/sessions/baileys-1/messages/text');
   assert.deepEqual(JSON.parse(text.calls.fetch[0].init.body), { to: '1234567890', text: 'Hello' });
-  assert.equal(text.calls.messages[0].create.body, 'Hello');
-  assert.equal(text.calls.messages[0].create.payload, undefined);
+  assert.equal(text.calls.messages[0].data[0].body, 'Hello');
+  assert.equal(text.calls.messages[0].data[0].payload, undefined);
 
   const template = harness();
   let fetches = 0;

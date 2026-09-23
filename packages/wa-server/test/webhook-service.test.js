@@ -38,20 +38,23 @@ test('native webhook delivery resolves only for 2xx', async () => {
   });
 });
 
-test('native webhook delivery rejects non-2xx with a bounded non-secret diagnostic', async () => {
+test('native webhook delivery failure is logged without rejecting the provider event', async () => {
   const secret = 'do-not-include-this-body';
   await withServer((req, res) => {
     res.writeHead(503, { 'content-type': 'text/plain' });
     res.end(secret.repeat(10_000));
   }, async (url) => {
-    await assert.rejects(
-      () => serviceFor(url).fire('message.received', 'session-1', { messageId: 'message-1' }),
-      (error) => {
-        assert.match(error.message, /HTTP 503/);
-        assert.ok(error.message.length < 200);
-        assert.doesNotMatch(error.message, /do-not-include-this-body/);
-        return true;
-      },
-    );
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (message) => warnings.push(String(message));
+    try {
+      await serviceFor(url).fire('message.received', 'session-1', { messageId: 'message-1' });
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /HTTP 503/);
+    assert.ok(warnings[0].length < 250);
+    assert.doesNotMatch(warnings[0], /do-not-include-this-body/);
   });
 });

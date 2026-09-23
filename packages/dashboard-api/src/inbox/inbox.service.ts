@@ -260,10 +260,8 @@ export class InboxService {
         update: {},
         create: { workspaceId, contactId: contact.id, sessionId: dto.sessionId },
       });
-      await tx.message.upsert({
-        where: { workspaceId_waMessageId: { workspaceId, waMessageId } },
-        update: {},
-        create: {
+      await tx.message.createMany({
+        data: [{
           workspaceId,
           conversationId: convo.id,
           waMessageId,
@@ -274,7 +272,8 @@ export class InboxService {
           status: 'SENT',
           fromMe: true,
           waTimestamp,
-        },
+        }],
+        skipDuplicates: true,
       });
       await tx.conversation.update({
         where: { id: convo.id },
@@ -443,12 +442,10 @@ export class InboxService {
     const preview =
       msgBody && msgBody.length ? msgBody.slice(0, 140) : OUTBOUND_PREVIEW[msgType] ?? msgType;
 
-    // Upsert (not create): the wa-server also mirrors this send back as a
-    // `message.sent` event, so guard against a double-insert race on waMessageId.
-    const message = await this.prisma.message.upsert({
-      where: { workspaceId_waMessageId: { workspaceId, waMessageId } },
-      update: {},
-      create: {
+    // The wa-server mirrors this send back as `message.sent`; let PostgreSQL
+    // discard whichever concurrent writer loses the waMessageId race.
+    await this.prisma.message.createMany({
+      data: [{
         workspaceId,
         conversationId: convo.id,
         waMessageId,
@@ -460,7 +457,11 @@ export class InboxService {
         status: 'SENT',
         fromMe: true,
         waTimestamp,
-      },
+      }],
+      skipDuplicates: true,
+    });
+    const message = await this.prisma.message.findUniqueOrThrow({
+      where: { workspaceId_waMessageId: { workspaceId, waMessageId } },
     });
 
     await this.prisma.conversation.update({

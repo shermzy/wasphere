@@ -332,10 +332,8 @@ export class InboxIngestService {
         update: {},
         create: { workspaceId, contactId: contact.id, sessionId: dto.sessionId },
       });
-      await tx.message.upsert({
-        where: { workspaceId_waMessageId: { workspaceId, waMessageId } },
-        update: {}, // already recorded (e.g. by the inbox composer) — no-op
-        create: {
+      await tx.message.createMany({
+        data: [{
           workspaceId,
           conversationId: convo.id,
           waMessageId,
@@ -347,7 +345,8 @@ export class InboxIngestService {
           status: 'SENT',
           fromMe: true,
           waTimestamp,
-        },
+        }],
+        skipDuplicates: true,
       });
       await tx.conversation.update({
         where: { id: convo.id },
@@ -358,7 +357,7 @@ export class InboxIngestService {
         },
       });
       return convo.id;
-    }, { timeout: 15_000 });
+    }, { timeout: 15_000, maxWait: 15_000 });
 
     // A delivery status may have raced ahead of this row — apply it now.
     await this.applyPendingStatus(workspaceId, waMessageId);
