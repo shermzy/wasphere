@@ -709,16 +709,14 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     if (type !== 'notify') return; // ignore history sync
 
     for (const msg of messages) {
-      if (msg.key.fromMe) continue; // ignore own messages
-
       // Cache message for quoted reply support
       this.cacheMessage(sessionId, msg);
 
       const config = this.sessionConfigs.get(sessionId) ?? SESSION_CONFIG_DEFAULTS;
 
-      if (!config.receive_enabled) continue; // early exit — webhook not fired
+      if (!msg.key.fromMe && !config.receive_enabled) continue; // inbound webhook disabled
 
-      if (config.auto_read_on_receive) {
+      if (!msg.key.fromMe && config.auto_read_on_receive) {
         const sock = this.sessions.get(sessionId);
         if (sock) {
           await sock.readMessages([msg.key]).catch(() => {});
@@ -852,12 +850,22 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         content.quotedMessageId = msg.message?.extendedTextMessage?.contextInfo?.stanzaId;
       }
 
-      await this.webhookService.fire('message.received', sessionId, {
-        ...basePayload,
-        type: outType,
-        content,
-        message: sanitizeMessage(msg),
-      });
+      if (msg.key.fromMe) {
+        await this.webhookService.fire('message.sent', sessionId, {
+          to: msg.key.remoteJid,
+          messageId: msg.key.id,
+          type: outType,
+          content,
+          timestamp: msg.messageTimestamp,
+        });
+      } else {
+        await this.webhookService.fire('message.received', sessionId, {
+          ...basePayload,
+          type: outType,
+          content,
+          message: sanitizeMessage(msg),
+        });
+      }
     }
   }
 
