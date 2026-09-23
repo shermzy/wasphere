@@ -1675,6 +1675,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     return {
       number,
       jid: result?.jid,
+      lid: typeof result?.lid === 'string' ? result.lid : undefined,
       isOnWhatsApp: result?.exists === true,
       isBusiness: (result as any)?.isBusiness || false,
     };

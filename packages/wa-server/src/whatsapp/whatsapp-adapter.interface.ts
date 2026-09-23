@@ -45,6 +45,7 @@ export interface GroupInfo {
 export interface ContactCheckResult {
   number: string;
   jid: string | undefined;
+  lid?: string;
   isOnWhatsApp: boolean;
   isBusiness: boolean;
 }

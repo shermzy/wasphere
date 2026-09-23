@@ -85,6 +85,7 @@ model Workspace {
   contacts      Contact[]
   conversations Conversation[]
   messages      Message[]
+  contactJidAliases ContactJidAlias[]
   projectRoutes ProjectRoute[]
   projectRouteAudits ProjectRouteAudit[]
   sessions           WorkspaceSession[]
@@ -318,6 +319,21 @@ model Contact {
   @@unique([workspaceId, jid])
   @@index([workspaceId, phone])
   @@map("contacts")
+}
+
+model ContactJidAlias {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  sessionId   String   @map("session_id")
+  aliasJid    String   @map("alias_jid")
+  canonicalJid String  @map("canonical_jid")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, sessionId, aliasJid])
+  @@index([workspaceId, sessionId, canonicalJid])
+  @@map("contact_jid_aliases")
 }
 
 // ---------------------------------------------------------------------------

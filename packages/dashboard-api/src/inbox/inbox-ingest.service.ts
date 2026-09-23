@@ -214,7 +214,6 @@ export class InboxIngestService {
     const pushName: string | null = (m?.pushName as string) ?? null;
     const avatarUrl: string | null = isGroup ? null : (data.avatarUrl as string) ?? null;
     // Group JIDs are the send target; 1:1 chats keep their normalized phone.
-    const phone = isGroup ? jid : jid.split('@')[0].replace(/[^0-9]/g, '');
     const chatName: string | null = isGroup
       ? ((data.groupName ?? data.chatName ?? data.fromName) as string | null) ?? null
       : pushName;
@@ -264,9 +263,17 @@ export class InboxIngestService {
     }
 
     const conversationId = await this.prisma.$transaction(async (tx) => {
+      const alias = !isGroup && jid.endsWith('@lid')
+        ? await tx.contactJidAlias.findUnique({
+            where: { workspaceId_sessionId_aliasJid: { workspaceId, sessionId: dto.sessionId, aliasJid: jid } },
+            select: { canonicalJid: true },
+          })
+        : null;
+      const canonicalJid = alias?.canonicalJid ?? jid;
+      const phone = isGroup ? canonicalJid : canonicalJid.split('@')[0].replace(/[^0-9]/g, '');
       const contact = await this.getOrCreateContact(tx, {
         workspaceId,
-        jid,
+        jid: canonicalJid,
         phone,
         whatsappName: chatName,
         avatarUrl,
@@ -343,11 +350,10 @@ export class InboxIngestService {
     const waMessageId: string | undefined = data.messageId;
     if (!to || !waMessageId) return;
 
-    const jid = String(to).includes('@') ? String(to) : `${String(to).replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+    const rawJid = String(to).includes('@') ? String(to) : `${String(to).replace(/[^0-9]/g, '')}@s.whatsapp.net`;
     // Broadcast lists and channels are not replyable Inbox conversations.
-    if (jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return;
+    if (rawJid.endsWith('@broadcast') || rawJid.endsWith('@newsletter')) return;
 
-    const phone = jid.endsWith('@g.us') ? jid : jid.split('@')[0].replace(/[^0-9]/g, '');
     const type = mapType(data.type);
     const content: Record<string, unknown> = { ...(data.content ?? {}) };
     const mediaUrl: string | null = (content.dataUri as string) ?? null;
@@ -356,6 +362,14 @@ export class InboxIngestService {
     const waTimestamp = new Date(toUnixSeconds(data.timestamp) * 1000);
 
     const conversationId = await this.prisma.$transaction(async (tx) => {
+      const alias = rawJid.endsWith('@lid')
+        ? await tx.contactJidAlias.findUnique({
+            where: { workspaceId_sessionId_aliasJid: { workspaceId, sessionId: dto.sessionId, aliasJid: rawJid } },
+            select: { canonicalJid: true },
+          })
+        : null;
+      const jid = alias?.canonicalJid ?? rawJid;
+      const phone = jid.endsWith('@g.us') ? jid : jid.split('@')[0].replace(/[^0-9]/g, '');
       const contact = await this.getOrCreateContact(tx, {
         workspaceId,
         jid,

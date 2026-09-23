@@ -30,6 +30,7 @@ import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
 import { PatchConversationDto } from './dto/patch-conversation.dto';
 import { SendReplyDto } from './dto/send-reply.dto';
 import { StartConversationDto } from './dto/start-conversation.dto';
+import { SyncJidMappingsDto } from './dto/sync-jid-mappings.dto';
 
 interface AuthenticatedRequest extends Request {
   user: { userId: string };
@@ -109,6 +110,18 @@ export class InboxController {
     @Body() dto: PatchConversationDto,
   ) {
     return this.inbox.patchConversation(req.user.userId, workspaceId, conversationId, dto);
+  }
+
+  @Post('jid-mappings')
+  @RequiresPermission('workspace:write')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Map verified WhatsApp LIDs to phone JIDs and merge duplicate chats' })
+  syncJidMappings(
+    @Req() req: AuthenticatedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: SyncJidMappingsDto,
+  ) {
+    return this.inbox.syncJidMappings(req.user.userId, workspaceId, dto);
   }
 
   @Post(':conversationId/read')

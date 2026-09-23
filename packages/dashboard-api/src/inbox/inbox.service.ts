@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -16,6 +17,7 @@ import { ListMessagesQueryDto } from './dto/list-messages-query.dto';
 import { PatchConversationDto } from './dto/patch-conversation.dto';
 import { SendReplyDto } from './dto/send-reply.dto';
 import { StartConversationDto } from './dto/start-conversation.dto';
+import { SyncJidMappingsDto } from './dto/sync-jid-mappings.dto';
 import { normalizeProjectRouteKey } from '../projects/project-route-key';
 
 // List/preview labels for outbound non-text replies (no body text to show).
@@ -157,6 +159,131 @@ export class InboxService {
     await this.writeAudit(workspaceId, convo.sessionId, 'PATCH', `/inbox/conversations/${conversationId}`);
     this.events.emit({ type: 'conversation.update', workspaceId, conversationId });
     return this.toConversationView(updated);
+  }
+
+  async syncJidMappings(userId: string, workspaceId: string, dto: SyncJidMappingsDto) {
+    await this.assertMember(workspaceId, userId);
+    await this.workspaces.assertProviderSession(userId, workspaceId, dto.sessionId);
+    const seen = new Set<string>();
+    for (const mapping of dto.mappings) {
+      if (seen.has(mapping.lidJid)) throw new BadRequestException('Duplicate LID in mapping batch');
+      seen.add(mapping.lidJid);
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      let merged = 0;
+      let renamed = 0;
+      let movedMessages = 0;
+      const updatedConversationIds = new Set<string>();
+
+      for (const { lidJid, phoneJid } of dto.mappings) {
+        const existingAlias = await tx.contactJidAlias.findUnique({
+          where: { workspaceId_sessionId_aliasJid: { workspaceId, sessionId: dto.sessionId, aliasJid: lidJid } },
+        });
+        if (existingAlias && existingAlias.canonicalJid !== phoneJid) {
+          throw new ConflictException('This LID is already mapped to another phone JID');
+        }
+        await tx.contactJidAlias.upsert({
+          where: { workspaceId_sessionId_aliasJid: { workspaceId, sessionId: dto.sessionId, aliasJid: lidJid } },
+          create: { workspaceId, sessionId: dto.sessionId, aliasJid: lidJid, canonicalJid: phoneJid },
+          update: {},
+        });
+
+        const lidContact = await tx.contact.findUnique({
+          where: { workspaceId_jid: { workspaceId, jid: lidJid } },
+        });
+        if (!lidContact) continue;
+
+        const phone = phoneJid.slice(0, -'@s.whatsapp.net'.length);
+        const phoneContact = await tx.contact.findUnique({
+          where: { workspaceId_jid: { workspaceId, jid: phoneJid } },
+        });
+        const lidConversation = await tx.conversation.findUnique({
+          where: { workspaceId_sessionId_contactId: { workspaceId, sessionId: dto.sessionId, contactId: lidContact.id } },
+          include: { projectRoute: true },
+        });
+        if (!lidConversation) continue;
+
+        if (!phoneContact) {
+          await tx.contact.update({ where: { id: lidContact.id }, data: { jid: phoneJid, phone } });
+          renamed++;
+          updatedConversationIds.add(lidConversation.id);
+          continue;
+        }
+
+        const tags = [...new Set([...phoneContact.tags, ...lidContact.tags])];
+        const notes = [...new Set([phoneContact.notes, lidContact.notes].filter((note): note is string => Boolean(note)))];
+        await tx.contact.update({
+          where: { id: phoneContact.id },
+          data: {
+            tags,
+            ...(phoneContact.whatsappName ? {} : lidContact.whatsappName ? { whatsappName: lidContact.whatsappName } : {}),
+            ...(phoneContact.savedName ? {} : lidContact.savedName ? { savedName: lidContact.savedName } : {}),
+            ...(phoneContact.avatarUrl ? {} : lidContact.avatarUrl ? { avatarUrl: lidContact.avatarUrl } : {}),
+            ...(notes.length ? { notes: notes.join('\n\n') } : {}),
+          },
+        });
+
+        const phoneConversation = await tx.conversation.findUnique({
+          where: { workspaceId_sessionId_contactId: { workspaceId, sessionId: dto.sessionId, contactId: phoneContact.id } },
+          include: { projectRoute: true },
+        });
+        if (!phoneConversation) {
+          await tx.conversation.update({ where: { id: lidConversation.id }, data: { contactId: phoneContact.id } });
+          updatedConversationIds.add(lidConversation.id);
+        } else {
+          if (lidConversation.projectRoute && phoneConversation.projectRoute) {
+            throw new ConflictException('Both chats have project routes; resolve the route before merging');
+          }
+          const moved = await tx.message.updateMany({
+            where: { workspaceId, conversationId: lidConversation.id },
+            data: { conversationId: phoneConversation.id },
+          });
+          movedMessages += moved.count;
+          if (lidConversation.projectRoute) {
+            await tx.projectRoute.update({
+              where: { id: lidConversation.projectRoute.id },
+              data: { conversationId: phoneConversation.id },
+            });
+          }
+          const lidTags = Array.isArray(lidConversation.tags) ? lidConversation.tags.filter((tag): tag is string => typeof tag === 'string') : [];
+          const phoneTags = Array.isArray(phoneConversation.tags) ? phoneConversation.tags.filter((tag): tag is string => typeof tag === 'string') : [];
+          const sourceIsNewer = lidConversation.lastMessageAt > phoneConversation.lastMessageAt;
+          await tx.conversation.update({
+            where: { id: phoneConversation.id },
+            data: {
+              unreadCount: phoneConversation.unreadCount + lidConversation.unreadCount,
+              tags: [...new Set([...phoneTags, ...lidTags])] as Prisma.InputJsonValue,
+              lastMessageAt: sourceIsNewer ? lidConversation.lastMessageAt : phoneConversation.lastMessageAt,
+              lastPreview: sourceIsNewer ? lidConversation.lastPreview : phoneConversation.lastPreview,
+              ...(phoneConversation.sessionDeletedAt ? {} : lidConversation.sessionDeletedAt ? { sessionDeletedAt: lidConversation.sessionDeletedAt } : {}),
+            },
+          });
+          await tx.conversation.delete({ where: { id: lidConversation.id } });
+          updatedConversationIds.add(phoneConversation.id);
+          updatedConversationIds.add(lidConversation.id);
+          merged++;
+        }
+
+        const remaining = await tx.conversation.count({ where: { workspaceId, contactId: lidContact.id } });
+        if (remaining === 0) await tx.contact.delete({ where: { id: lidContact.id } });
+      }
+
+      await tx.auditLog.create({
+        data: { workspaceId, sessionId: dto.sessionId, method: 'POST', endpoint: '/inbox/jid-mappings', statusCode: 200 },
+      });
+      return { mapped: dto.mappings.length, merged, renamed, movedMessages, updatedConversationIds: [...updatedConversationIds] };
+    }, { timeout: 60_000, maxWait: 15_000 });
+
+    for (const conversationId of result.updatedConversationIds) {
+      this.events.emit({ type: 'conversation.update', workspaceId, conversationId });
+    }
+    return {
+      mapped: result.mapped,
+      merged: result.merged,
+      renamed: result.renamed,
+      movedMessages: result.movedMessages,
+    };
   }
 
   async markRead(userId: string, workspaceId: string, conversationId: string) {
