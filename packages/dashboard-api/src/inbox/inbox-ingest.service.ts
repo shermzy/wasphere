@@ -152,6 +152,38 @@ export class InboxIngestService {
     }
   }
 
+  private async getOrCreateContact(
+    tx: Prisma.TransactionClient,
+    data: {
+      workspaceId: string;
+      jid: string;
+      phone: string;
+      whatsappName?: string | null;
+      avatarUrl?: string | null;
+    },
+  ) {
+    await tx.contact.createMany({ data: [data], skipDuplicates: true });
+    return tx.contact.findUniqueOrThrow({
+      where: { workspaceId_jid: { workspaceId: data.workspaceId, jid: data.jid } },
+    });
+  }
+
+  private async getOrCreateConversation(
+    tx: Prisma.TransactionClient,
+    data: { workspaceId: string; sessionId: string; contactId: string },
+  ) {
+    await tx.conversation.createMany({ data: [data], skipDuplicates: true });
+    return tx.conversation.findUniqueOrThrow({
+      where: {
+        workspaceId_sessionId_contactId: {
+          workspaceId: data.workspaceId,
+          sessionId: data.sessionId,
+          contactId: data.contactId,
+        },
+      },
+    });
+  }
+
   private async ingestInbound(workspaceId: string, dto: WebhookEventDto): Promise<void> {
     const data = dto.data as Record<string, any>;
     const m = data.message as Record<string, any> | undefined;
@@ -232,25 +264,27 @@ export class InboxIngestService {
     }
 
     const conversationId = await this.prisma.$transaction(async (tx) => {
-      const contact = await tx.contact.upsert({
-        where: { workspaceId_jid: { workspaceId, jid } },
-        update: {
-          ...(chatName ? { whatsappName: chatName } : {}),
-          ...(avatarUrl ? { avatarUrl } : {}),
-        },
-        create: { workspaceId, jid, phone, whatsappName: chatName, avatarUrl },
+      const contact = await this.getOrCreateContact(tx, {
+        workspaceId,
+        jid,
+        phone,
+        whatsappName: chatName,
+        avatarUrl,
       });
-
-      const convo = await tx.conversation.upsert({
-        where: {
-          workspaceId_sessionId_contactId: {
-            workspaceId,
-            sessionId: dto.sessionId,
-            contactId: contact.id,
+      if (chatName || avatarUrl) {
+        await tx.contact.update({
+          where: { id: contact.id },
+          data: {
+            ...(chatName ? { whatsappName: chatName } : {}),
+            ...(avatarUrl ? { avatarUrl } : {}),
           },
-        },
-        update: {},
-        create: { workspaceId, contactId: contact.id, sessionId: dto.sessionId },
+        });
+      }
+
+      const convo = await this.getOrCreateConversation(tx, {
+        workspaceId,
+        sessionId: dto.sessionId,
+        contactId: contact.id,
       });
 
       await tx.message.create({
@@ -322,15 +356,15 @@ export class InboxIngestService {
     const waTimestamp = new Date(toUnixSeconds(data.timestamp) * 1000);
 
     const conversationId = await this.prisma.$transaction(async (tx) => {
-      const contact = await tx.contact.upsert({
-        where: { workspaceId_jid: { workspaceId, jid } },
-        update: {},
-        create: { workspaceId, jid, phone },
+      const contact = await this.getOrCreateContact(tx, {
+        workspaceId,
+        jid,
+        phone,
       });
-      const convo = await tx.conversation.upsert({
-        where: { workspaceId_sessionId_contactId: { workspaceId, sessionId: dto.sessionId, contactId: contact.id } },
-        update: {},
-        create: { workspaceId, contactId: contact.id, sessionId: dto.sessionId },
+      const convo = await this.getOrCreateConversation(tx, {
+        workspaceId,
+        sessionId: dto.sessionId,
+        contactId: contact.id,
       });
       await tx.message.createMany({
         data: [{

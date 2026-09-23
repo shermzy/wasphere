@@ -142,6 +142,18 @@ test('concurrent duplicate outbound events are idempotent', async () => {
   );
 });
 
+test('concurrent inbound and outbound events share one new contact and conversation', async () => {
+  const jid = '923000000012@s.whatsapp.net';
+  await Promise.all([
+    handle(textMsg('race-inbound', jid)),
+    handle(sentMsg('race-outbound', jid)),
+  ]);
+
+  assert.equal(await prisma.contact.count({ where: { workspaceId: wsId, jid } }), 1);
+  assert.equal(await prisma.conversation.count({ where: { workspaceId: wsId, sessionId: 's1' } }), 1);
+  assert.equal(await prisma.message.count({ where: { workspaceId: wsId } }), 2);
+});
+
 test('upgrades an undecryptable placeholder when the decoded content arrives', async () => {
   const jid = '923000000002@s.whatsapp.net';
   // 1) arrives undecryptable (no content / unknown type) -> stored as "unknown"
