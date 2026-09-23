@@ -128,6 +128,78 @@ test('exposes route resolution and project update tools through MCP', async () =
   await server.close();
 });
 
+test('sends image and document attachments through MCP and rejects URL media', async () => {
+  const sends = [];
+  const inbox = {
+    listRouteMatches: async () => [{
+      id: 'conversation-id',
+      sessionId: 'main',
+      sessionDeletedAt: null,
+      contact: { name: 'Fairbreeze', jid: '123@g.us' },
+    }],
+    sendToRoute: async (...args) => {
+      sends.push(args);
+      return { id: 'message-id' };
+    },
+  };
+  const { client, server } = await connectMcp(inbox);
+
+  const attachments = [
+    {
+      arguments: {
+        routeKey: '#fairbreeze',
+        kind: 'image',
+        media: 'data:image/png;base64,aGVsbG8=',
+        caption: 'Project photo',
+      },
+      expected: {
+        kind: 'image',
+        media: 'data:image/png;base64,aGVsbG8=',
+        caption: 'Project photo',
+      },
+    },
+    {
+      arguments: {
+        routeKey: '#fairbreeze',
+        kind: 'document',
+        media: 'data:application/pdf;base64,aGVsbG8=',
+        fileName: 'status.pdf',
+        mimetype: 'application/pdf',
+      },
+      expected: {
+        kind: 'document',
+        media: 'data:application/pdf;base64,aGVsbG8=',
+        fileName: 'status.pdf',
+        mimetype: 'application/pdf',
+      },
+    },
+  ];
+
+  for (const attachment of attachments) {
+    const result = await client.callTool({
+      name: 'send_project_update',
+      arguments: attachment.arguments,
+    });
+    assert.equal(result.isError, undefined);
+  }
+
+  const rejectedUrl = await client.callTool({
+    name: 'send_project_update',
+    arguments: {
+      routeKey: '#fairbreeze',
+      kind: 'image',
+      media: 'https://example.com/image.png',
+    },
+  });
+  assert.equal(rejectedUrl.isError, true);
+
+  assert.deepEqual(sends.map((args) => args[3]), attachments.map(({ expected }) => expected));
+  assert.ok(sends.every((args) => args[1] === 'workspace-id' && args[2] === 'fairbreeze'));
+
+  await client.close();
+  await server.close();
+});
+
 test('API-key authentication rejects a different workspace before controller execution', async () => {
   const guard = new CombinedAuthGuard({
     validateApiKey: async () => ({

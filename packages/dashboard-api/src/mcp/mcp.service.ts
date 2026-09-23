@@ -22,7 +22,10 @@ export interface McpPrincipal {
 }
 
 type RouteKeyArgs = { routeKey: string };
-type SendProjectUpdateArgs = RouteKeyArgs & { text: string };
+type SendProjectUpdateArgs =
+  | (RouteKeyArgs & { kind?: 'text'; text: string })
+  | (RouteKeyArgs & { kind: 'image'; media: string; caption?: string })
+  | (RouteKeyArgs & { kind: 'document'; media: string; fileName: string; mimetype: string });
 type ToolRegistration = {
   title: string;
   description: string;
@@ -38,6 +41,34 @@ type RouteMatch = {
 };
 
 const ROUTE_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+const routeKeyInput = z.string().trim().min(1).max(41)
+  .describe('Project route, for example #fairbreeze');
+const mediaDataUriInput = z.string().max(10_485_760).regex(
+  /^data:[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*;base64,[A-Za-z0-9+/]+=*$/,
+  'Media must be a base64 data URI',
+);
+const sendProjectUpdateInput = z.union([
+  z.object({
+    routeKey: routeKeyInput,
+    kind: z.literal('text').optional(),
+    text: z.string().trim().min(1).max(4096).describe('Text message to send'),
+  }).strict(),
+  z.object({
+    routeKey: routeKeyInput,
+    kind: z.literal('image'),
+    media: mediaDataUriInput
+      .describe('Base64 data URI of the image, for example data:image/png;base64,...'),
+    caption: z.string().max(1024).optional().describe('Optional image caption'),
+  }).strict(),
+  z.object({
+    routeKey: routeKeyInput,
+    kind: z.literal('document'),
+    media: mediaDataUriInput
+      .describe('Base64 data URI of the document, for example data:application/pdf;base64,...'),
+    fileName: z.string().min(1).max(255).describe('File name shown to the recipient'),
+    mimetype: z.string().min(1).max(127).describe('Document MIME type, for example application/pdf'),
+  }).strict(),
+]);
 
 function normalizeRouteKey(value: string): string {
   const routeKey = normalizeProjectRouteKey(value);
@@ -137,7 +168,7 @@ export class McpService {
       { name: 'wasphere-project-routing', version: '1.0.0' },
       {
         instructions:
-          'Use resolve_project_route before sending when the target is ambiguous. Use send_project_update for approved text updates. Project mappings are managed in the WaSphere dashboard, not through MCP. Never request or invent a WhatsApp JID or session ID.',
+          'Use resolve_project_route before sending when the target is ambiguous. Use send_project_update for approved text or image/document updates. Project mappings are managed in the WaSphere dashboard, not through MCP. Never request or invent a WhatsApp JID or session ID.',
       },
     );
     const registerTool = (
@@ -190,31 +221,38 @@ export class McpService {
       {
         title: 'Send project update',
         description:
-          'Send a text update to the WhatsApp conversation assigned to a project route such as #fairbreeze. This sends an external message. Use only after the user has approved the message content.',
-        inputSchema: z.object({
-          routeKey: z.string().trim().min(1).max(41).describe('Project route, for example #fairbreeze'),
-          text: z.string().trim().min(1).max(4096).describe('Text message to send'),
-        }).strict(),
+          'Send text, an image, or a document to the WhatsApp conversation assigned to a project route such as #fairbreeze. Attachments use a base64 data URI; images may include a caption, and documents require a file name and MIME type. This sends an external message. Use only after the user has approved the content.',
+        inputSchema: sendProjectUpdateInput,
         annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false },
       },
       async (args) => {
-        const { routeKey, text } = args as unknown as SendProjectUpdateArgs;
+        const sendArgs = args as unknown as SendProjectUpdateArgs;
         if (!hasPermission(principal.permissions, 'messages:send')) {
           return toolError('API key missing required permission: messages:send');
         }
 
         try {
-          const normalized = normalizeRouteKey(routeKey);
+          const normalized = normalizeRouteKey(sendArgs.routeKey);
           const beforeSend = await this.lookupRoute(principal, normalized);
           const immediatelyBeforeSend = await this.lookupRoute(principal, normalized);
           if (!sameRoute(beforeSend, immediatelyBeforeSend)) {
             throw new ConflictException('Project route changed while this request was being authorized.');
           }
+          const reply = sendArgs.kind === 'image'
+            ? { kind: 'image' as const, media: sendArgs.media, caption: sendArgs.caption }
+            : sendArgs.kind === 'document'
+              ? {
+                  kind: 'document' as const,
+                  media: sendArgs.media,
+                  fileName: sendArgs.fileName,
+                  mimetype: sendArgs.mimetype,
+                }
+              : { kind: 'text' as const, text: sendArgs.text };
           const message = await this.inbox.sendToRoute(
             principal.userId,
             principal.workspaceId,
             normalized,
-            { kind: 'text', text },
+            reply,
             principal.sessionScope,
           );
           const result = {
