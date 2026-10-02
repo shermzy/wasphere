@@ -1,10 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, edited]
+  schedule:
+    - cron: "7 19 * * *"
 
 # Cancel superseded runs on the same ref
 concurrency:
@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'release')) }}
     name: Build & typecheck
     runs-on: ubuntu-latest
     env:
