@@ -4,6 +4,7 @@ import {
   WHATSAPP_ADAPTER,
   IWhatsAppAdapter,
   SendResult,
+  OutboundEvent,
   PresenceType,
 } from '../whatsapp/whatsapp-adapter.interface';
 import { ProviderRegistry } from '../whatsapp/providers';
@@ -137,6 +138,11 @@ export class MessagesService implements OnApplicationShutdown {
   ): Promise<SendResult> {
     this.assertBaileysOnly(sessionId, 'Polls');
     return this.adapter.sendPoll(sessionId, to, name, options, selectableCount);
+  }
+
+  async sendEvent(sessionId: string, to: string, event: OutboundEvent): Promise<SendResult> {
+    this.assertBaileysOnly(sessionId, 'Events');
+    return this.adapter.sendEvent(sessionId, to, event);
   }
 
   async sendReaction(

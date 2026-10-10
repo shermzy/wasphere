@@ -9,6 +9,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   WASocket,
+  WAMessageKey,
   BaileysEventMap,
   proto,
   getContentType,
@@ -29,6 +30,7 @@ import {
   IWhatsAppAdapter,
   SessionInfo,
   SendResult,
+  OutboundEvent,
   GroupInfo,
   ContactCheckResult,
   ProfileInfo,
@@ -742,13 +744,10 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       const isGroup = msg.key.remoteJid?.endsWith('@g.us');
 
       // LID addressing: remoteJid may be an opaque "<id>@lid". The real phone
-      // number (PN) is on key.senderPn. Forward both so the dashboard resolves
-      // the true number for display + as the reply target.
-      const lidKey = msg.key as typeof msg.key & {
-        senderPn?: string | null;
-        senderLid?: string | null;
-      };
-      const senderPn = lidKey.senderPn ?? null;
+      // number (PN) is on key.participantAlt (groups) or key.remoteJidAlt (1:1
+      // chats). Forward both so the dashboard resolves the true number for
+      // display + as the reply target.
+      const senderPn = msg.key.participantAlt ?? msg.key.remoteJidAlt ?? null;
       if (senderPn && msg.key.remoteJid?.endsWith('@lid')) {
         this.rememberLid(sessionId, msg.key.remoteJid, senderPn);
       }
@@ -763,7 +762,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         // canonical phone-number JID (falls back to remoteJid when not @lid)
         senderJid,
         senderPn,
-        senderLid: lidKey.senderLid ?? (msg.key.remoteJid?.endsWith('@lid') ? msg.key.remoteJid : null),
+        senderLid: msg.key.remoteJid?.endsWith('@lid') ? msg.key.remoteJid : null,
         avatarUrl,
         isGroup,
         timestamp: msg.messageTimestamp,
@@ -907,7 +906,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       if (declared && declared > CAP) return null; // skip large files
 
       const buffer = (await downloadMediaMessage(
-        msg,
+        msg as any,
         'buffer',
         {},
         { logger: console as never, reuploadRequest: sock.updateMediaMessage },
@@ -957,8 +956,8 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       // Voter + creator can each be addressed by LID or phone-number (PN).
       // Per Baileys issue #2342 the winning combo for current WhatsApp is
       // creator=LID + voter=PN, so we list those first.
-      const vk = msg.key as typeof msg.key & { senderPn?: string | null };
-      const voterPn = vk.senderPn ? jidNormalizedUser(vk.senderPn) : '';
+      const voterPnJid = (msg.key as WAMessageKey).remoteJidAlt ?? null;
+      const voterPn = voterPnJid ? jidNormalizedUser(voterPnJid) : '';
       const voterLid = msg.key.remoteJid?.endsWith('@lid')
         ? jidNormalizedUser(msg.key.remoteJid)
         : '';
@@ -1004,7 +1003,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
       );
       const selected = aggregated.filter((a) => a.voters.length > 0).map((a) => a.name);
 
-      const displaySenderPn = vk.senderPn ?? null;
+      const displaySenderPn = voterPnJid;
       const displayJid = displaySenderPn ?? msg.key.remoteJid ?? '';
 
       await this.webhookService.fire('message.received', sessionId, {
@@ -1341,6 +1340,29 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         name,
         values: options,
         selectableCount,
+      },
+    });
+    return { messageId: result?.key?.id, status: 'sent' };
+  }
+
+  async sendEvent(sessionId: string, to: string, event: OutboundEvent): Promise<SendResult> {
+    const sock = this.getSocket(sessionId);
+    await this.applyRandomDelay(sessionId);
+    const jid = this.toJid(to);
+    const result = await sock.sendMessage(jid, {
+      event: {
+        name: event.name,
+        description: event.description,
+        startDate: event.startDate,
+        // Baileys divides endDate by 1000 without flooring, so whole seconds only.
+        endDate: event.endDate && new Date(Math.floor(event.endDate.getTime() / 1000) * 1000),
+        location: event.location && {
+          degreesLatitude: event.location.latitude,
+          degreesLongitude: event.location.longitude,
+          name: event.location.name,
+          address: event.location.address,
+        },
+        extraGuestsAllowed: event.extraGuestsAllowed,
       },
     });
     return { messageId: result?.key?.id, status: 'sent' };
