@@ -28,6 +28,15 @@ export interface SessionInfo {
   config: SessionConfig;
 }
 
+export interface OutboundEvent {
+  name: string;
+  description?: string;
+  startDate: Date;
+  endDate?: Date;
+  location?: { latitude: number; longitude: number; name?: string; address?: string };
+  extraGuestsAllowed?: boolean;
+}
+
 export interface SendResult {
   messageId: string | undefined;
   status: string;
@@ -163,6 +172,8 @@ export interface IWhatsAppAdapter {
     options: string[],
     selectableCount?: number,
   ): Promise<SendResult>;
+
+  sendEvent(sessionId: string, to: string, event: OutboundEvent): Promise<SendResult>;
 
   sendReaction(
     sessionId: string,

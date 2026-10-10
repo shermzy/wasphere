@@ -14,6 +14,7 @@ import { SendContactDto } from './dto/send-contact.dto';
 import { SendButtonsDto } from './dto/send-buttons.dto';
 import { SendListDto } from './dto/send-list.dto';
 import { SendPollDto } from './dto/send-poll.dto';
+import { SendEventDto } from './dto/send-event.dto';
 import { SendReactionDto } from './dto/send-reaction.dto';
 import { SendTemplateDto } from './dto/send-template.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
@@ -230,6 +231,32 @@ export class MessagesController {
     @Body() body: SendPollDto,
   ) {
     return this.messagesService.sendPoll(sid, body.to, body.name, body.options, body.selectableCount);
+  }
+
+  @Post('event')
+  @ApiOperation({
+    summary: 'Send a calendar event',
+    description: 'Sends a native WhatsApp event card (name, start and end time, optional location). Baileys sessions only.',
+  })
+  @ApiParam({ name: 'sessionId', description: 'Session identifier', example: 'my-session' })
+  @ApiResponse({ status: 201, description: 'Event sent.' })
+  @ApiResponse({ status: 400, description: 'Malformed request body.' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid X-Api-Token.' })
+  @ApiResponse({ status: 404, description: 'Session not found.' })
+  @ApiResponse({ status: 501, description: 'Meta Cloud API sessions do not support events.' })
+  @ApiResponse({ status: 500, description: 'Baileys adapter error. Body contains { error: string }.' })
+  sendEvent(
+    @Param('sessionId', ValidateSessionIdPipe) sid: string,
+    @Body() body: SendEventDto,
+  ) {
+    return this.messagesService.sendEvent(sid, body.to, {
+      name: body.name,
+      description: body.description,
+      startDate: new Date(body.startTime),
+      endDate: body.endTime ? new Date(body.endTime) : undefined,
+      location: body.location,
+      extraGuestsAllowed: body.extraGuestsAllowed,
+    });
   }
 
   @Post('reaction')
