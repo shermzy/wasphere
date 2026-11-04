@@ -81,6 +81,7 @@ version on success.
 | `CORS_ORIGIN` | both | Allowed browser origin — never `*` |
 | `WA_SERVER_INTERNAL_URL` | dashboard-ui | Default WA Server URL (see above) |
 | `DASHBOARD_API_URL` | dashboard-ui | Where the UI reaches the Dashboard API |
+| `WEBHOOK_ALERT_URL` | dashboard-api | Optional Discord or Slack incoming-webhook URL, told when a webhook is auto-deactivated after 50 failures. Unset: log line only |
 
 Full lists with defaults live in each package's `.env.example`.
 

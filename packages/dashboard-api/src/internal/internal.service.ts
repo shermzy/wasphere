@@ -62,14 +62,20 @@ export class InternalService {
 
   private async runFanout(workspaceId: string, dto: WebhookEventDto): Promise<void> {
     const webhooks = await this.prisma.webhook.findMany({
-      where: { workspaceId, isActive: true },
-      select: { id: true, url: true, signingSecret: true, retryMax: true, events: true },
+      where: { workspaceId },
+      select: { id: true, url: true, signingSecret: true, retryMax: true, events: true, isActive: true },
     });
 
-    const matching = webhooks.filter((wh) =>
+    const subscribed = webhooks.filter((wh) =>
       eventMatchesFilter(wh.events as (WebhookEvent | '*')[], dto.event as WebhookEvent),
     );
+    for (const wh of subscribed) {
+      if (!wh.isActive) {
+        this.logger.warn(`[Fanout] webhook.skipped_inactive id=${wh.id} event=${dto.event}`);
+      }
+    }
 
+    const matching = subscribed.filter((wh) => wh.isActive);
     if (matching.length === 0) return;
 
     const results = await Promise.allSettled(
