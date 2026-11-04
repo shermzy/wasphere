@@ -19,15 +19,43 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Request } from 'express';
+import { ApiKeyPermissionGuard } from '../auth/api-key-permission.guard';
+import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CapabilityGuard } from '../auth/capability.guard';
 import { RequireCapability } from '../auth/require-capability.decorator';
+import { RequiresPermission } from '../auth/requires-permission.decorator';
 import { WebhooksService } from './webhooks.service';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
 
 interface AuthenticatedRequest extends Request {
   user: { userId: string };
+}
+
+/**
+ * Listing is the only webhook route an API key can reach (webhooks:read), so
+ * monitors can see switched-off webhooks. It has its own controller because the
+ * guards below apply to every route in their class, and the write routes stay
+ * dashboard-login only.
+ */
+@ApiTags('Webhooks')
+@ApiBearerAuth()
+@Controller('workspaces/:workspaceId/webhooks')
+@UseGuards(CombinedAuthGuard, ApiKeyPermissionGuard, CapabilityGuard)
+@RequireCapability('webhooks')
+export class WebhooksReadController {
+  constructor(private readonly webhooksService: WebhooksService) {}
+
+  @Get()
+  @RequiresPermission('webhooks:read')
+  @ApiOperation({ summary: 'List all webhooks for a workspace' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace UUID' })
+  @ApiResponse({ status: 200, description: 'Array of webhook metadata (no signing secrets)' })
+  @ApiResponse({ status: 403, description: 'Not a member of this workspace' })
+  list(@Req() req: AuthenticatedRequest, @Param('workspaceId') workspaceId: string) {
+    return this.webhooksService.list(req.user.userId, workspaceId);
+  }
 }
 
 @ApiTags('Webhooks')
@@ -37,15 +65,6 @@ interface AuthenticatedRequest extends Request {
 @RequireCapability('webhooks')
 export class WebhooksController {
   constructor(private readonly webhooksService: WebhooksService) {}
-
-  @Get()
-  @ApiOperation({ summary: 'List all webhooks for a workspace' })
-  @ApiParam({ name: 'workspaceId', description: 'Workspace UUID' })
-  @ApiResponse({ status: 200, description: 'Array of webhook metadata (no signing secrets)' })
-  @ApiResponse({ status: 403, description: 'Not a member of this workspace' })
-  list(@Req() req: AuthenticatedRequest, @Param('workspaceId') workspaceId: string) {
-    return this.webhooksService.list(req.user.userId, workspaceId);
-  }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)

@@ -44,6 +44,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # Optional Discord or Slack incoming-webhook URL, told when a webhook is auto-deactivated.
+      WEBHOOK_ALERT_URL: ${WEBHOOK_ALERT_URL:-}
       NODE_ENV: production
     depends_on:
       postgres:

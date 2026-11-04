@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { randomBytes, createHmac } from 'crypto';
@@ -46,6 +47,8 @@ const LIST_SELECT = {
 
 @Injectable()
 export class WebhooksService {
+  private readonly logger = new Logger(WebhooksService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   private async requireMembership(userId: string, workspaceId: string): Promise<void> {
@@ -185,14 +188,49 @@ export class WebhooksService {
       const wh = await this.prisma.webhook.update({
         where: { id: webhookId },
         data: { lastFailedAt: new Date(), failureCount: { increment: 1 } },
-        select: { failureCount: true },
+        select: { failureCount: true, name: true, workspaceId: true },
       });
       if (wh.failureCount >= AUTO_DEACTIVATE_THRESHOLD) {
-        await this.prisma.webhook.update({
-          where: { id: webhookId },
+        // Deliveries already in flight keep failing after the switch-off, so only
+        // the call that actually flips isActive reports it.
+        const { count } = await this.prisma.webhook.updateMany({
+          where: { id: webhookId, isActive: true },
           data: { isActive: false },
         });
+        if (count === 1) {
+          await this.reportDeactivation(webhookId, wh);
+        }
       }
+    }
+  }
+
+  private async reportDeactivation(
+    webhookId: string,
+    wh: { failureCount: number; name: string; workspaceId: string },
+  ): Promise<void> {
+    const summary =
+      `webhook.deactivated id=${webhookId} name=${JSON.stringify(wh.name)} ` +
+      `workspace=${wh.workspaceId} failures=${wh.failureCount}`;
+    this.logger.error(
+      `[Fanout] ${summary}: events are skipped and not replayed until it is re-enabled`,
+    );
+
+    const alertUrl = process.env.WEBHOOK_ALERT_URL;
+    if (!alertUrl) {
+      this.logger.warn('[Fanout] WEBHOOK_ALERT_URL is not set; no deactivation alert sent');
+      return;
+    }
+    const message = `WaSphere ${summary}. Events are skipped and not replayed until it is re-enabled.`;
+    // `content` is Discord's message field and `text` is Slack's.
+    const result = await deliverWebhook(
+      alertUrl,
+      JSON.stringify({ content: message, text: message }),
+      {},
+    );
+    if (!result.success) {
+      this.logger.error(
+        `[Fanout] webhook.deactivated alert failed id=${webhookId} status=${result.statusCode ?? 'none'}`,
+      );
     }
   }
 }
