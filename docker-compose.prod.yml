@@ -48,6 +48,8 @@ services:
       AI_REPLY_BASE_URL: ${AI_REPLY_BASE_URL:-}
       AI_REPLY_API_KEY: ${AI_REPLY_API_KEY:-}
       AI_REPLY_MODEL: ${AI_REPLY_MODEL:-}
+      # Optional Discord or Slack incoming-webhook URL, told when a webhook is auto-deactivated.
+      WEBHOOK_ALERT_URL: ${WEBHOOK_ALERT_URL:-}
       NODE_ENV: production
     depends_on:
       postgres:
