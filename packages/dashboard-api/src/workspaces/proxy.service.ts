@@ -36,8 +36,8 @@ const STRIP_RESPONSE_HEADERS = new Set([
 
 const CONNECT_TIMEOUT_MS = 10_000;
 // Time the WA server may take to send response headers once connected. Must
-// exceed the longest per-session anti-ban send delay (random_delay_max_ms),
-// which wa-server waits out before replying.
+// stay above the maximum random_delay_max_ms of any session (the anti-ban send
+// delay wa-server waits out before replying), or sends 504 while still going out.
 const RESPONSE_HEADERS_TIMEOUT_MS = 30_000;
 const READ_TIMEOUT_MS = 30_000;
 
@@ -339,6 +339,14 @@ export class ProxyService {
           }
         });
       }, CONNECT_TIMEOUT_MS);
+
+      // Client went away before we answered: stop the upstream request.
+      // finish() is a no-op once settled, so a normal close after res.end() is harmless.
+      res.on('close', () => {
+        if (settled) return;
+        proxyReq.destroy();
+        finish();
+      });
 
       proxyReq.on('error', (err: NodeJS.ErrnoException) => {
         finish(() => {

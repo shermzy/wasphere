@@ -58,3 +58,50 @@ test('refused connection still maps to 502 WA_SERVER_UNREACHABLE', async () => {
   assert.equal(res.statusCode, 502);
   assert.equal(res.body, '{"error":"WA_SERVER_UNREACHABLE"}');
 });
+
+test('keep-alive: reused socket (no connect event) still gets the 30s header window', async () => {
+  const upstream = http.createServer((_q, r) => {
+    setTimeout(() => { r.writeHead(200, { 'content-type': 'application/json' }); r.end('{"ok":true}'); }, 12_000);
+  });
+  await new Promise((ok) => upstream.listen(0, '127.0.0.1', ok));
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  const origRequest = http.request;
+  const reused = [];
+  http.request = (opts, cb) => {
+    const r = origRequest.call(http, { ...opts, agent }, cb);
+    r.on('socket', (s) => reused.push(!s.connecting));
+    return r;
+  };
+  const svc = service(`http://127.0.0.1:${upstream.address().port}`);
+  try {
+    for (let i = 0; i < 2; i++) {
+      const res = fakeRes();
+      await svc.proxy('u', 'w', 'api/sessions/main/messages/text', req(), res);
+      assert.equal(res.statusCode, 200, `request ${i + 1}`);
+    }
+  } finally {
+    http.request = origRequest;
+    agent.destroy();
+    upstream.closeAllConnections?.();
+    upstream.close();
+  }
+  assert.deepEqual(reused, [false, true], 'second request must reuse the socket');
+});
+
+test('client closing before the upstream answers destroys the upstream request', async () => {
+  let upstreamClosed;
+  const closed = new Promise((ok) => { upstreamClosed = ok; });
+  const upstream = http.createServer((q, _r) => { q.on('close', upstreamClosed); });
+  await new Promise((ok) => upstream.listen(0, '127.0.0.1', ok));
+  const res = fakeRes();
+  const p = service(`http://127.0.0.1:${upstream.address().port}`)
+    .proxy('u', 'w', 'api/sessions/main/messages/text', req(), res);
+  setTimeout(() => res.emit('close'), 300);
+  try {
+    await p;
+    await closed;
+  } finally {
+    upstream.closeAllConnections?.();
+    upstream.close();
+  }
+});
