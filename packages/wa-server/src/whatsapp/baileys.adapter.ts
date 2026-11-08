@@ -700,6 +700,14 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     }
   }
 
+  private isOwnJid(sessionId: string, jid: string | null | undefined): boolean {
+    if (!jid) return false;
+    const user = this.sessions.get(sessionId)?.user as { id?: string; lid?: string } | undefined;
+    if (!user) return false;
+    const target = jidNormalizedUser(jid);
+    return [user.id, user.lid].some((own) => !!own && jidNormalizedUser(own) === target);
+  }
+
   // ─── Incoming messages handler ──────────────────────────────────────────
 
   private async handleIncomingMessages(
@@ -709,6 +717,13 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     if (type !== 'notify') return; // ignore history sync
 
     for (const msg of messages) {
+      // Baileys 6.x sets fromMe only when the participant matches our phone-number
+      // JID. In LID-addressed groups our own posts from other linked devices carry
+      // our LID as participant, so they would surface as inbound messages.
+      if (!msg.key.fromMe && this.isOwnJid(sessionId, msg.key.participant)) {
+        msg.key.fromMe = true;
+      }
+
       // Cache message for quoted reply support
       this.cacheMessage(sessionId, msg);
 
@@ -854,6 +869,9 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         await this.webhookService.fire('message.sent', sessionId, {
           to: msg.key.remoteJid,
           messageId: msg.key.id,
+          sender: basePayload.sender,
+          isGroup,
+          groupName,
           type: outType,
           content,
           timestamp: msg.messageTimestamp,
