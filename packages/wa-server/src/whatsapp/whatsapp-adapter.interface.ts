@@ -1,6 +1,7 @@
 export const WHATSAPP_ADAPTER = Symbol('WHATSAPP_ADAPTER');
 
 import { SessionConfig } from './session-config.interface';
+import type { HistoryMessage } from './history-requests';
 export { SessionConfig };
 
 // ─── Supporting types (no Baileys dependency) ─────────────────────────────
@@ -236,6 +237,14 @@ export interface IWhatsAppAdapter {
   ): Promise<{ groupId: string; name: string; participants: string[] }>;
 
   getGroupInfo(sessionId: string, groupId: string): Promise<GroupInfo>;
+
+  /** On-demand history older than the anchor message, fetched from the phone. */
+  fetchGroupHistory(
+    sessionId: string,
+    groupId: string,
+    anchor: { id: string; fromMe: boolean; timestamp: number },
+    count: number,
+  ): Promise<HistoryMessage[]>;
 
   getAllGroupsParticipating(sessionId: string): Promise<GroupInfo[]>;
 

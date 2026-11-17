@@ -24,6 +24,15 @@ export class GroupsService {
     return this.adapter.getGroupInfo(sessionId, groupId);
   }
 
+  async fetchHistory(
+    sessionId: string,
+    groupId: string,
+    anchor: { id: string; fromMe: boolean; timestamp: number },
+    count: number,
+  ) {
+    return this.adapter.fetchGroupHistory(sessionId, groupId, anchor, count);
+  }
+
   async getAllGroupsParticipating(sessionId: string): Promise<GroupInfo[]> {
     return this.adapter.getAllGroupsParticipating(sessionId);
   }

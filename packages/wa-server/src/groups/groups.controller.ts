@@ -10,6 +10,7 @@ import { UpdateGroupDescriptionDto } from './dto/update-group-description.dto';
 import { JoinGroupDto } from './dto/join-group.dto';
 import { ParticipantsDto } from './dto/participants.dto';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { GroupHistoryDto } from './dto/group-history.dto';
 
 @ApiTags('Groups')
 @Controller('sessions/:sessionId/groups')
@@ -63,6 +64,26 @@ export class GroupsController {
     @Param('groupId', ValidateGroupIdPipe) gid: string,
   ) {
     return this.groupsService.getGroupInfo(sid, gid);
+  }
+
+  @Post(':groupId/history')
+  @ApiOperation({
+    summary: 'Fetch older group messages',
+    description:
+      'Asks the linked phone for up to 50 messages older than the anchor message and returns them, oldest first, as text-only items. The phone must be online. Nothing is sent to webhooks.',
+  })
+  @ApiParam({ name: 'sessionId', description: 'Session identifier', example: 'my-session' })
+  @ApiParam({ name: 'groupId', description: 'WhatsApp group JID', example: '1234567890-1234567890@g.us' })
+  @ApiResponse({ status: 201, description: 'Array of history messages (may be empty).' })
+  @ApiResponse({ status: 404, description: 'Session not found.' })
+  @ApiResponse({ status: 409, description: 'A history request for this group is already running.' })
+  @ApiResponse({ status: 504, description: 'The phone did not answer within 30 seconds.' })
+  fetchHistory(
+    @Param('sessionId', ValidateSessionIdPipe) sid: string,
+    @Param('groupId', ValidateGroupIdPipe) gid: string,
+    @Body() body: GroupHistoryDto,
+  ) {
+    return this.groupsService.fetchHistory(sid, gid, body.anchor, body.count);
   }
 
   @Get(':groupId/picture')

@@ -38,6 +38,15 @@ import {
   PresenceType,
 } from './whatsapp-adapter.interface';
 import { SessionConfig, SESSION_CONFIG_DEFAULTS } from './session-config.interface';
+import {
+  HistoryBusyError,
+  HistoryMessage,
+  HistoryRequests,
+  HistoryTimeoutError,
+  toHistoryMessages,
+} from './history-requests';
+
+const HISTORY_TIMEOUT_MS = 30_000;
 
 // Allowlist for Baileys disconnect reason strings surfaced in API responses / webhooks.
 // Prevents raw Boom payload text (which may contain internal state) reaching clients.
@@ -97,6 +106,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
   // Eviction: when size reaches 100, delete the oldest inserted key before inserting the new one.
   private readonly messageCache = new Map<string, Map<string, proto.IWebMessageInfo>>();
   private readonly MESSAGE_CACHE_LIMIT = 100;
+  private readonly historyRequests = new HistoryRequests();
 
   // HIDDENXP FORK: Baileys' decoded message.key never carries the RECIPIENT's phone
   // number for a self-authored (fromMe) message to an @lid contact — only sender_pn/
@@ -331,6 +341,7 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
 
     this.sessionInfo.delete(sessionId);
     this.messageCache.delete(sessionId);
+    this.historyRequests.dropSession(sessionId, new NotFoundException(`Session ${sessionId} was deleted`));
     this.qrMeta.delete(sessionId);
     this.sendWindow.delete(sessionId);
 
@@ -436,6 +447,12 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
         this.cacheMessage(sessionId, msg);
       }
       await this.handleIncomingMessages(sessionId, m);
+    });
+
+    // HIDDENXP FORK: answers fetchGroupHistory() only. Initial/recent history
+    // syncs are ignored and never reach a webhook.
+    sock.ev.on('messaging-history.set', (h) => {
+      this.historyRequests.settle(sessionId, h);
     });
 
     sock.ev.on('messages.update', async (updates) => {
@@ -1512,6 +1529,40 @@ export class BaileysAdapter implements IWhatsAppAdapter, OnModuleInit {
     const sock = this.getSocket(sessionId);
     const metadata = await sock.groupMetadata(this.toGroupJid(groupId));
     return metadata as unknown as GroupInfo;
+  }
+
+  async fetchGroupHistory(
+    sessionId: string,
+    groupId: string,
+    anchor: { id: string; fromMe: boolean; timestamp: number },
+    count: number,
+  ): Promise<HistoryMessage[]> {
+    const sock = this.getSocket(sessionId);
+    const chatJid = this.toGroupJid(groupId);
+    let wait: ReturnType<HistoryRequests['open']>;
+    try {
+      wait = this.historyRequests.open(sessionId, chatJid, HISTORY_TIMEOUT_MS);
+    } catch (e) {
+      if (e instanceof HistoryBusyError) throw new HttpException(e.message, HttpStatus.CONFLICT);
+      throw e;
+    }
+    try {
+      const requestId = await sock.fetchMessageHistory(
+        count,
+        { remoteJid: chatJid, fromMe: anchor.fromMe, id: anchor.id },
+        anchor.timestamp,
+      );
+      wait.setRequestId(requestId);
+    } catch (e) {
+      wait.cancel(e as Error);
+    }
+    try {
+      const messages = await wait.done;
+      return toHistoryMessages(messages, (m) => getContentType(m));
+    } catch (e) {
+      if (e instanceof HistoryTimeoutError) throw new HttpException(e.message, HttpStatus.GATEWAY_TIMEOUT);
+      throw e;
+    }
   }
 
   async getAllGroupsParticipating(sessionId: string): Promise<GroupInfo[]> {
